@@ -15,7 +15,7 @@ func Verified() {}
 
 // Unverified writes atomically, so no reader observes a partial value. No test
 // names this symbol, so the claim is unverified.
-func Unverified() {}
+func Unverified() {} // want "Unverified documents an invariant"
 
 // Descriptive returns the number of segments it was given. The documentation
 // only describes; it asserts no property, so it is never reported.
@@ -23,19 +23,19 @@ func Descriptive() int { return 0 }
 
 // internalHelper always writes atomically. Unexported symbols are IN scope: a
 // property claimed on an unexported helper is still a property nothing tests.
-func internalHelper() {}
+func internalHelper() {} // want "internalHelper documents an invariant"
 
 // Cache is safe to copy: its state lives behind a reference field. A type
 // declaration's claim counts, and no test names it.
-type Cache struct{ store map[string]string }
+type Cache struct{ store map[string]string } // want "Cache documents an invariant"
 
 // Limit is always positive, a claim attached to a const declaration that no
 // test names.
-const Limit = 1
+const Limit = 1 // want "Limit documents an invariant"
 
 // Registry never returns nil, a claim attached to a var declaration that no
 // test names.
-var Registry = map[string]string{}
+var Registry = map[string]string{} // want "Registry documents an invariant"
 
 // Plain has no doc-comment claim at all.
 type Plain struct{}

@@ -83,49 +83,18 @@ type finding struct {
 // run reports each exported symbol whose documentation asserts a property that
 // no test function in the package names.
 func run(pass *analysis.Pass) (any, error) {
-	if !isCorrelatable(pass) {
+	ins := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	tested, hasTests := testedSymbols(readDir, readFile, packageDir(pass.Fset, pass.Files))
+	if !hasTests {
 		return nil, nil
 	}
-	ins := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	tested := testedSymbols(pass, ins)
 	report(pass, findings(pass, ins, tested))
 	return nil, nil
 }
 
-// isCorrelatable reports whether this pass holds both test files and non-test
-// files, which is what lets a claim be matched against the tests. The plain
-// (test-free) pass of a package must stay silent, or every claim would be
-// reported as unverified; a package whose tests live entirely in an external
-// `package a_test` is likewise not analyzed, since no single pass holds both.
-func isCorrelatable(pass *analysis.Pass) bool {
-	var tests, sources int
-	for _, file := range pass.Files {
-		if isTest(fileOf(pass, file)) {
-			tests++
-			continue
-		}
-		sources++
-	}
-	return tests > 0 && sources > 0
-}
-
-// testedSymbols is the concatenated, lower-cased names of every test function
-// in the pass, against which a symbol is considered named.
-func testedSymbols(pass *analysis.Pass, ins *inspector.Inspector) testNames {
-	var names strings.Builder
-	ins.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
-		decl, _ := n.(*ast.FuncDecl)
-		if !isTest(fileOf(pass, n)) || !strings.HasPrefix(decl.Name.Name, "Test") {
-			return
-		}
-		names.WriteString(strings.ToLower(decl.Name.Name) + "\n")
-	})
-	return testNames(names.String())
-}
-
 // findings collects every documented invariant on an exported symbol in a
 // non-test file that no test names, in source order.
-func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) []finding {
+func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) map[finding]token.Pos {
 	found := map[finding]token.Pos{}
 	nodes := []ast.Node{(*ast.FuncDecl)(nil), (*ast.GenDecl)(nil)}
 	ins.Preorder(nodes, func(n ast.Node) {
@@ -134,7 +103,7 @@ func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) [
 		}
 		collect(n, tested, found)
 	})
-	return sorted(found)
+	return found
 }
 
 // collect records a finding when n's documentation asserts a property and its
@@ -223,29 +192,13 @@ func sorted(found map[finding]token.Pos) []finding {
 	return out
 }
 
-// report emits one diagnostic per finding, anchored at the package's tests
-// where the missing verification belongs.
-func report(pass *analysis.Pass, found []finding) {
-	at := testAnchor(pass)
-	for _, item := range found {
-		pass.Reportf(at, message, item.symbol, item.claim)
+// report emits one diagnostic per finding, anchored at the DECLARATION carrying
+// the claim. That is where a reader has to go to judge it, and it is available
+// now that the reporting pass no longer has to be one holding test files.
+func report(pass *analysis.Pass, found map[finding]token.Pos) {
+	for _, item := range sorted(found) {
+		pass.Reportf(found[item], message, item.symbol, item.claim)
 	}
-}
-
-// testAnchor is the position diagnostics are reported at: the package clause of
-// the pass's first test file by name, so the anchor is stable regardless of the
-// order the loader presents files in.
-func testAnchor(pass *analysis.Pass) token.Pos {
-	first := ""
-	at := token.NoPos
-	for _, file := range pass.Files {
-		name := string(fileOf(pass, file))
-		if !isTest(fileName(name)) || (first != "" && name >= first) {
-			continue
-		}
-		first, at = name, file.Package
-	}
-	return at
 }
 
 // fileOf is the path of the file containing n.

@@ -1,4 +1,4 @@
-package a // want "Unverified documents an invariant \\(\"atomically\"\\) that no test names" "internalHelper documents an invariant \\(\"atomically\"\\) that no test names" "Cache documents an invariant \\(\"safe to\"\\) that no test names" "Limit documents an invariant \\(\"always\"\\) that no test names" "Registry documents an invariant \\(\"never\"\\) that no test names"
+package a
 
 import "testing"
 
