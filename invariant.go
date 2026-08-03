@@ -106,63 +106,119 @@ func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) m
 	return found
 }
 
-// collect records a finding when n's documentation asserts a property and its
-// symbol is not named by any test.
+// collect records a finding for each of n's documented symbols whose doc
+// comment asserts a property that no test names.
 func collect(node ast.Node, tested testNames, into map[finding]token.Pos) {
-	symbol, doc := documented(node)
-	if symbol == "" || isNamedBy(symbol, tested) {
-		return
-	}
-	if claim := claimIn(doc); claim != "" {
-		into[finding{symbol: symbol, claim: claim}] = node.Pos()
+	for _, item := range documented(node) {
+		if isNamedBy(item.symbol, tested) {
+			continue
+		}
+		if claim := claimIn(item.doc); claim != "" {
+			into[finding{symbol: item.symbol, claim: claim}] = item.pos
+		}
 	}
 }
 
-// documented returns the symbol a declaration introduces and its doc comment.
-// An undocumented declaration yields an empty name.
-func documented(node ast.Node) (symbolName, docText) {
+// documentedSymbol is one symbol a declaration documents: its name, the doc
+// comment speaking for it, and the position a finding anchors at.
+type documentedSymbol struct {
+	symbol symbolName
+	doc    docText
+	pos    token.Pos
+}
+
+// documented returns the symbols a declaration introduces, each paired with
+// the doc comment that speaks for it. An undocumented declaration yields
+// nothing.
+func documented(node ast.Node) []documentedSymbol {
 	switch decl := node.(type) {
 	case *ast.FuncDecl:
-		return documentedIdent(decl.Name, decl.Doc)
+		return named(decl.Name, decl.Doc, decl.Pos())
 	case *ast.GenDecl:
-		return genDeclSymbol(decl)
+		return genDeclSymbols(decl)
 	}
-	return "", ""
+	return nil
 }
 
-// genDeclSymbol returns the symbol a type, const, or var declaration
-// introduces, taking the first spec's name as the declaration's subject.
-func genDeclSymbol(decl *ast.GenDecl) (symbolName, docText) {
+// genDeclSymbols returns the symbols a type, const, or var declaration
+// documents: the declaration's own doc paired with the first spec's name, and
+// each spec's OWN doc paired with that spec's name — the grouped-declaration
+// form, where a member of a const (...) or var (...) group documents itself.
+// A claim in a group member's doc is as much a contract claim as one on the
+// declaration.
+func genDeclSymbols(decl *ast.GenDecl) []documentedSymbol {
 	if len(decl.Specs) == 0 {
-		return "", ""
+		return nil
 	}
-	switch spec := decl.Specs[0].(type) {
+	out := speced(decl.Specs[0], decl.Doc, decl.Pos())
+	for _, spec := range decl.Specs {
+		out = append(out, specSymbols(spec)...)
+	}
+	return out
+}
+
+// specSymbols pairs a spec's OWN doc comment with its subject, anchored at
+// that subject: a claim written on a group member points at the member, not
+// at the group. The position comes from the identifier rather than the spec
+// so nothing is asked of a spec that introduces no symbol.
+func specSymbols(spec ast.Spec) []documentedSymbol {
+	ident := subjectOf(spec)
+	if ident == nil {
+		return nil
+	}
+	return named(ident, specDoc(spec), ident.Pos())
+}
+
+// speced pairs a spec's subject identifier with doc, yielding nothing for a
+// spec that introduces no symbol (an import).
+func speced(spec ast.Spec, doc *ast.CommentGroup, pos token.Pos) []documentedSymbol {
+	ident := subjectOf(spec)
+	if ident == nil {
+		return nil
+	}
+	return named(ident, doc, pos)
+}
+
+// subjectOf is the identifier a spec declares — a type's name, or a value
+// spec's first name. Go's grammar requires at least one name in a value spec,
+// so there is no empty case there.
+func subjectOf(spec ast.Spec) *ast.Ident {
+	switch s := spec.(type) {
 	case *ast.TypeSpec:
-		return documentedIdent(spec.Name, decl.Doc)
+		return s.Name
 	case *ast.ValueSpec:
-		return firstValueName(spec, decl.Doc)
+		if len(s.Names) == 0 {
+			return nil
+		}
+		return s.Names[0]
 	}
-	return "", ""
+	return nil
 }
 
-// firstValueName returns the first name a value spec declares. Go's grammar
-// requires at least one name in a value spec, so there is no empty case here.
-func firstValueName(spec *ast.ValueSpec, doc *ast.CommentGroup) (symbolName, docText) {
-	return documentedIdent(spec.Names[0], doc)
+// specDoc is the doc comment a spec itself carries — present in the grouped
+// form, absent (held by the declaration instead) in the ungrouped one.
+func specDoc(spec ast.Spec) *ast.CommentGroup {
+	switch s := spec.(type) {
+	case *ast.TypeSpec:
+		return s.Doc
+	case *ast.ValueSpec:
+		return s.Doc
+	}
+	return nil
 }
 
-// documentedIdent pairs an identifier with its documentation, yielding an empty
-// name when the declaration carries no doc comment.
+// named pairs an identifier with the documentation speaking for it, yielding
+// nothing when there is no doc comment.
 //
 // Unexported symbols are deliberately IN scope. Measured against real
 // codebases, the highest-value claims sat on unexported helpers — an "atomic"
 // write, an "unambiguous" encoding — and restricting to the exported surface
 // missed every one of them while saving only a handful of findings.
-func documentedIdent(ident *ast.Ident, doc *ast.CommentGroup) (symbolName, docText) {
+func named(ident *ast.Ident, doc *ast.CommentGroup, pos token.Pos) []documentedSymbol {
 	if doc == nil {
-		return "", ""
+		return nil
 	}
-	return symbolName(ident.Name), docText(doc.Text())
+	return []documentedSymbol{{symbol: symbolName(ident.Name), doc: docText(doc.Text()), pos: pos}}
 }
 
 // claimIn returns the first property-asserting phrase in doc, or empty when the
