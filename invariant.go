@@ -21,6 +21,7 @@ package invariant
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"sort"
 	"strings"
 
@@ -101,16 +102,17 @@ func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) m
 		if isTest(fileOf(pass, n)) {
 			return
 		}
-		collect(n, tested, found)
+		collect(pass.TypesInfo, n, tested, found)
 	})
 	return found
 }
 
 // collect records a finding for each of n's documented symbols whose doc
 // comment asserts a property that no test names.
-func collect(node ast.Node, tested testNames, into map[finding]token.Pos) {
+func collect(info *types.Info, node ast.Node, tested testNames, into map[finding]token.Pos) {
+	sentinels := sentinelNames(info, node)
 	for _, item := range documented(node) {
-		if isNamedBy(item.symbol, tested) {
+		if sentinels[item.symbol] || isNamedBy(item.symbol, tested) {
 			continue
 		}
 		if claim := claimIn(item.doc); claim != "" {

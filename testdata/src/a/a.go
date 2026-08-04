@@ -39,3 +39,19 @@ var Registry = map[string]string{} // want "Registry documents an invariant"
 
 // Plain has no doc-comment claim at all.
 type Plain struct{}
+
+// Sentinel errors, whose docs describe the CONDITION each reports rather than
+// a property the code guarantees. The claim words here belong to the failure
+// being described, so none of these is an invariant and none is reported.
+const (
+	// ErrCreateOutput is returned when the output directory cannot be created.
+	ErrCreateOutput sentinelError = "failed to create output"
+	// ErrExpire is returned when the expiration can never be computed.
+	ErrExpire sentinelError = "failed to compute expiration"
+)
+
+// sentinelError is a string-typed error, the shape the fleet's errs.Const uses.
+type sentinelError string
+
+// Error satisfies the error interface.
+func (e sentinelError) Error() string { return string(e) }
