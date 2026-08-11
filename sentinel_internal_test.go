@@ -23,10 +23,12 @@ func TestSentinelNamesExemptsExactlyTheErrorTypedDeclarations(t *testing.T) {
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}}
 
 	errType := types.NewNamed(
-		types.NewTypeName(token.NoPos, nil, "sentinel", nil), types.Typ[types.String], nil)
+		types.NewTypeName(token.NoPos, nil, "sentinel", nil), types.Typ[types.String], nil,
+	)
 	errType.AddMethod(types.NewFunc(token.NoPos, nil, "Error", types.NewSignatureType(
 		types.NewParam(token.NoPos, nil, "", errType), nil, nil, nil,
-		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.String])), false)))
+		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.String])), false,
+	)))
 
 	info.Defs[errIdent] = types.NewConst(token.NoPos, nil, "ErrThing", errType, nil)
 	info.Defs[plainIdent] = types.NewConst(token.NoPos, nil, "Limit", types.Typ[types.Int], nil)
