@@ -54,17 +54,28 @@
 // repo, which reports nothing under any of these builds — where the parent is
 // silent and this build reports.
 //
-// Requiring the IMPORT is what makes the first half decidable, and it is the
-// guard. A file that does not import the package cannot package-qualify it — Go
-// has no spelling for a package referring to itself — so inside `package store`
-// the `store` in `store.Get()` is a VALUE. Matching the package's name without
-// the import is wrong in both directions at once, and both were reproduced: a
-// local named for the package makes a method call expand the package's function
-// of that name, reopening this defect; and the same local stops a genuine
-// method call from reaching the method's body, inventing a false positive. 43
-// internal test files across the fleet bind such a local and select on it.
-// Deriving the name from the import PATH instead does not work either — this
-// fleet puts package `authority` at `.../go-authority`.
+// Requiring the IMPORT is NECESSARY and is not the whole guard, and reading it
+// as the whole guard was a hole. A file that does not import the package cannot
+// package-qualify it — Go has no spelling for a package referring to itself — so
+// inside `package store` the `store` in `store.Get()` is a VALUE, and matching
+// the package's name without the import is wrong in both directions at once:
+// a local named for the package would make a method call expand the package's
+// function of that name, reopening this defect, and the same local would stop a
+// genuine method call from reaching the method's body. 43 internal test files
+// across the fleet bind such a local and select on it. Deriving the name from
+// the import PATH instead does not work either — this fleet puts package
+// `authority` at `.../go-authority`.
+//
+// But the qualified route exists ONLY in an external test file, and that file
+// does import the package, so there the import is satisfied by any local of the
+// same spelling: `store := fake{}; store.Fetch()` silenced a claim that
+// `f := fake{}; f.Fetch()` reports, one identifier apart, in the only files the
+// guard was written for. So the qualifier must also be a name the file does not
+// itself BIND, which go/parser decides by the language's own scope rules rather
+// than by a guess at which syntax declares a name: it resolves the local and
+// leaves the import unresolved. The discrimination is per-BODY, not per-file —
+// one external test file can shadow the import in one function and qualify
+// through it in the next, and both are read correctly.
 //
 // Crediting the method half is not decoration: dropping it adds 209 findings
 // over the 279 modules, on symbols their tests drive through a method —
@@ -129,6 +140,18 @@
 // whose spelling happens to contain it. The reach half is case SENSITIVE, since
 // Go identifiers are: a `run(t)` helper does not reach `Run`.
 //
+// A BARE name is matched by spelling and nothing else, which is the same missing
+// type information stated once more and has one further consequence worth
+// naming: a test file that DOT-IMPORTS another package supplies bare spellings
+// this package never declared, and they are credited as this package's. An
+// external test writing `import . "strings"` and calling `Replace(...)` silences
+// a claim on this package's own `Replace`, which it never calls; written
+// `strings.Replace(...)` the same test reports it. That route is closed by the
+// language for an internal test file, which cannot dot-import a supplier of a
+// name its own package declares, and it is closed by policy for this fleet,
+// whose lint gate bans dot-imports outright — but nothing here closes it, and
+// nothing here can without types.
+//
 // Only a func whose name begins "Test" is a test here. An Example, a Fuzz target
 // and a Benchmark all exercise their subject under go test and none of them
 // counts.
@@ -180,6 +203,16 @@
 // live working trees, and the own-body binary measured 495 earlier the same day
 // and 497 twice in a row afterwards, unchanged binary. Every number above was
 // taken from one back-to-back run on 2026-08-15.
+//
+// RE-MEASURED after the qualifier guard stopped accepting a spelling the file
+// itself binds: 262 fleet modules, this build against the build before it, 300
+// findings across 61 modules under BOTH and zero silenced in either direction,
+// with 47 reach-only and 253 name-alone reproducing exactly. The delta is not
+// evidence that the change is small and must not be read as one: the fleet holds
+// no external test file that shadows its own import at a selection reaching a
+// claimed symbol, so the dimension is held constant and no result over it could
+// have differed. The evidence is the constructed module, where one identifier
+// decides the verdict, and it reported +1 as its own control in the same sweep.
 //
 // This is a PROBE, not a gate. Its precision is bounded by English rather than
 // by Go — the keyword set will match prose that is descriptive rather than

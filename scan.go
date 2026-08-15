@@ -137,9 +137,26 @@ func osReadDirNames(dir dirPath) ([]string, error) {
 
 // packageDir is the directory holding the package under analysis, or empty when
 // the pass carries no files.
+//
+// The directory is token.File.Name's, never fset.Position's. Position applies
+// `//line` directives, which are ordinary compiled source, so reading the
+// adjusted name would let ONE comment line in ONE file choose the directory this
+// probe reads its whole corpus from — aim it at a directory holding no
+// `*_test.go` and testedSymbols reports no tests, run returns before reporting,
+// and every claim in every OTHER file of the package goes silent too, with
+// nothing in those files for a reader to find. That is a whole-package
+// disablement written in one comment, and it appears in no configuration file
+// and carries no marker. token.File.Name is what the go tool compiled, which the
+// judged file cannot rewrite.
+//
+// token.File.Name is not the author's directory for a cgo package, where it is a
+// build-cache path — but neither is Position's there, measured on both readings
+// in errtested.corpus-dir-is-the-packages-own (k1n81awc): the pass's FIRST file
+// of a cgo package carries the cache path under each, and this function returns
+// on the first file. So that defect is shared, pre-existing and untouched here.
 func packageDir(fset *token.FileSet, files []*ast.File) dirPath {
 	for _, file := range files {
-		return dirPath(filepath.Dir(fset.Position(file.Pos()).Filename))
+		return dirPath(filepath.Dir(fset.File(file.Pos()).Name()))
 	}
 	return ""
 }

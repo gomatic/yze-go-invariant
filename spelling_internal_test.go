@@ -147,6 +147,42 @@ func TestSelfNamesInIsWhatAnIMPORTOfThePackageBinds(t *testing.T) {
 		"a file that does not import the package cannot qualify it, so its own name there is a VALUE")
 }
 
+// TestIsSelfQualifiedSeparatesTheImportFromAShadowingLocal pins the mechanism
+// the guard leans on, and pins it in the only file kind where it can
+// matter. An external test file is the one place that both imports the package
+// and can bind a local of the same spelling, so it is the one place where
+// "the file imports it" stops being enough. go/parser resolves the local and
+// leaves the import unresolved, which is the language's own scope rule rather
+// than a guess at which syntax declares a name — and it is scoped to the body,
+// so the two spellings below live in one file and disagree.
+//
+// This test is also the tripwire for the dependency: if a toolchain stopped
+// resolving, the first assertion would fail here rather than the guard quietly
+// reopening.
+func TestIsSelfQualifiedSeparatesTheImportFromAShadowingLocal(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	const src = "package a_test\n" +
+		"import \"a\"\n" +
+		"func TestShadowed(t *testing.T) {\n\ta := holder{}\n\ta.Hold()\n}\n" +
+		"func TestImported(t *testing.T) { a.Reveal() }\n"
+	parsed := parseSource(t, "a_ext_test.go", src)
+	self := selfNamesIn(parsed, thisPackage)
+	want.True(self["a"], "the file imports the package, so the qualified route exists here at all")
+
+	shadowed := mentionedIn(parsed.Decls[1].(*ast.FuncDecl).Body, self)
+	want.True(
+		shadowed.selected["Hold"],
+		"a qualifier the body itself binds is a VALUE, so its selected half is a member",
+	)
+	want.False(shadowed.plain["Hold"], "and never a declaration of the package it is merely spelled like")
+
+	imported := mentionedIn(parsed.Decls[2].(*ast.FuncDecl).Body, self)
+	want.True(imported.plain["Reveal"], "while the same spelling left to the import denotes the package")
+	want.False(imported.selected["Reveal"], "which is the route an external test has to an unexported name")
+}
+
 // TestImportedPathIsEmptyWhenThePathIsNotAQuotedString pins both directions of
 // the import read. The empty result on a malformed spec is the CONTRACT rather
 // than a swallowed error: selfNamesIn compares the result to the analyzed

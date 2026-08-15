@@ -39,16 +39,18 @@ type selfNames map[string]bool
 // name each IMPORT of that package's path binds, which is the alias where the
 // file writes one and the package's own declared name where it does not.
 //
-// The IMPORT is what makes this decidable, and requiring it is the whole guard.
-// A file that does not import the package cannot package-qualify it — Go has no
-// spelling for a package referring to itself, so inside `package store` the
-// `store` in `store.Get()` is necessarily a VALUE. Matching the package's name
-// without the import gets that backwards in both directions at once: it reopens
-// the defect this rule exists to close, since a local named for the package
-// makes a method call expand the package's function of that name; and it
-// invents a new one, since the same local stops a genuine method call from
-// reaching the method's body. 43 internal test files across 279 fleet modules
-// bind a local spelled like their own package and then select on it.
+// The IMPORT is what makes this POSSIBLE, and it is half the guard; the other
+// half is isSelfQualified's, which asks whether the qualifier is a spelling the
+// file itself binds. A file that does not import the package cannot
+// package-qualify it — Go has no spelling for a package referring to itself, so
+// inside `package store` the `store` in `store.Get()` is necessarily a VALUE.
+// Matching the package's name without the import gets that backwards in both
+// directions at once: it reopens the defect this rule exists to close, since a
+// local named for the package makes a method call expand the package's function
+// of that name; and it invents a new one, since the same local stops a genuine
+// method call from reaching the method's body. 43 internal test files across 279
+// fleet modules bind a local spelled like their own package and then select on
+// it.
 //
 // Deriving the name from the import PATH instead of from the package's own
 // would be wrong here and was checked: this fleet's convention puts a library's
@@ -219,10 +221,41 @@ func identsIn(node ast.Node, self selfNames) spelled {
 func selectedBy(expr *ast.SelectorExpr, self selfNames) spelled {
 	found := identsIn(expr.X, self)
 	name := symbolName(expr.Sel.Name)
-	if qualifier, isIdent := expr.X.(*ast.Ident); isIdent && self[qualifier.Name] {
+	if isSelfQualified(expr.X, self) {
 		found.plain[name] = true
 		return found
 	}
 	found.selected[name] = true
 	return found
+}
+
+// isSelfQualified reports whether a qualified reference's qualifier is the
+// package under analysis rather than a value.
+//
+// The import is NECESSARY and is not sufficient, and reading it as sufficient
+// was a hole. An INTERNAL test file cannot import its own package, so its
+// selfNames is empty and a local spelled like the package is harmless there —
+// but the qualified route exists only in an EXTERNAL test file, where the import
+// IS present, so a name test satisfies self[...] for any local of that spelling.
+// One local named for the import then makes every selection on it expand the
+// package's declaration of that name: `store := fake{}; store.Fetch()` silenced a
+// claim that `f := fake{}; f.Fetch()` reports, with nothing else changed.
+//
+// Which spelling a qualifier BINDS is a scoping question, and go/parser answers
+// it: the resolver records an Object on every identifier it resolves within the
+// file, and an import name is deliberately not among them, so a resolved
+// qualifier is a local, a parameter, a receiver or a file-level declaration and
+// an unresolved one is the import. That is exact rather than approximate — it is
+// the language's own scope rules rather than a guess at which syntax declares a
+// name — and it is available because scan.go parses test files with resolution
+// on. TestIsSelfQualifiedSeparatesTheImportFromAShadowingLocal pins that
+// dependency, so a toolchain that stopped resolving would fail the suite rather
+// than quietly reopen this.
+//
+// A package-level declaration of the analyzed package's own name in the same
+// file cannot be the qualifier here, because Go refuses to compile a file that
+// both imports a name and declares it.
+func isSelfQualified(qualifier ast.Expr, self selfNames) bool {
+	ident, isIdent := qualifier.(*ast.Ident)
+	return isIdent && self[ident.Name] && ident.Obj == nil
 }

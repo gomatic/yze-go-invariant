@@ -115,6 +115,21 @@ func unseen() {}
 // Reveal is the exported entry an external test drives to reach unseen.
 func Reveal() { unseen() }
 
+// escrowed writes atomically, so no reader observes a partial value.
+// Case: unseen's mirror image, in the file that CAN import this package. The
+// only test naming it writes `a.Hold()` where `a` is a LOCAL of a type declared
+// in that same test file, spelled like the import. The import makes the
+// package-qualified route possible and does not make a spelling of it the
+// package: the local shadows the import at that selection, so its selected half
+// is a member and must not expand this package's own Hold. Crediting it on the
+// spelling alone silences this claim for the cost of naming a variable, in the
+// only files where the qualified route exists at all.
+func escrowed() {} // want "escrowed documents an invariant"
+
+// Hold is the package-level function whose body a shadowed qualifier would
+// wrongly reach. Its own documentation only describes.
+func Hold() { escrowed() }
+
 // Run is the fleet's mandated domain entry point, and its name is also the
 // method the subtest idiom calls on *testing.T. Its own documentation only
 // describes, so it is the collision target rather than a subject.
@@ -202,6 +217,21 @@ var Registry = map[string]string{} // want "Registry documents an invariant"
 
 // Plain has no doc-comment claim at all.
 type Plain struct{}
+
+// MB is always a whole number of bytes.
+// Case: the naming half is keyed on the symbol's LENGTH as well as its
+// spelling, and every other symbol here is at least three characters, so a rule
+// widened to excuse short symbols would change no verdict anywhere else. A test
+// below reaches this const under a name that does not carry it, so only the
+// naming half stands between the widening and a silence.
+const MB = 1 << 20 // want "MB documents an invariant"
+
+// Widened is never reordered.
+// Case: the naming half is keyed on the test's NAME, so a disjunct crediting
+// some prefix of it — an "integration" convention an author writes freely — is
+// a forgeable marker that adds no statement. The only test reaching this symbol
+// carries such a prefix and does not carry the symbol's name.
+func Widened() {} // want "Widened documents an invariant"
 
 // Sentinel errors, whose docs describe the CONDITION each reports rather than
 // a property the code guarantees. The claim words here belong to the failure

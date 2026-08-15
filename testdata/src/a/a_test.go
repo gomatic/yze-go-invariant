@@ -114,6 +114,19 @@ func TestShadowedIsNeverNil(t *testing.T) {
 	a.Load()
 }
 
+// TestSizeIsWholeBytes reaches MB and does not carry its name, so the claim on
+// a two-character symbol stands exactly as it would on a longer one.
+func TestSizeIsWholeBytes(t *testing.T) {
+	if MB != 1<<20 {
+		t.Fatal("MB is not a whole number of bytes")
+	}
+}
+
+// TestIntegrationSuite reaches Widened under a name that does not carry it. The
+// prefix is an author's convention and nothing more, so it acquires no
+// verification and must not excuse the claim.
+func TestIntegrationSuite(t *testing.T) { Widened() }
+
 // TestReleasedIsSafeToCopy names released and spells Sealed twice: bare, which
 // is the package function that reaches the subject, and selected from a value,
 // which is the method namesake that reaches nothing. One test, two lookups.

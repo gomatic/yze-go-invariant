@@ -66,12 +66,27 @@ func report(pass *analysis.Pass, found map[finding]token.Pos) {
 	}
 }
 
-// fileOf is the path of the file containing n.
+// fileOf is the path of the file containing n, as the go tool selected it
+// rather than as the file describes itself.
+//
+// fset.Position applies `//line` directives, which are ordinary compiled source,
+// so reading the adjusted name would let a production file write
+// `//line zz_test.go:1` and have every claim it declares skipped as a test's —
+// this rule switched off for real, compiled, shipped code by one comment line
+// that appears in no configuration file and carries no marker. It is wrong in
+// the other direction too: a real `_test.go` writing `//line prod.go:1` has its
+// own helpers judged as production code and reported. token.File.Name is what
+// the go tool compiled, and no directive rewrites it.
 func fileOf(pass *analysis.Pass, n ast.Node) fileName {
-	return fileName(pass.Fset.Position(n.Pos()).Filename)
+	return fileName(pass.Fset.File(n.Pos()).Name())
 }
 
-// isTest reports whether name is a Go test file.
+// isTest reports whether name is a Go test file, by the same rule the go tool
+// applies: the name ENDS in "_test.go". Both edges of that literal matter and
+// both are cased. A suffix widened to "test.go" would exempt `httptest.go`,
+// which is an ordinary, idiomatic, compiled Go filename; a suffix widened to a
+// substring would exempt any name merely CONTAINING it, which an author picks
+// freely.
 func isTest(name fileName) bool {
 	return strings.HasSuffix(string(name), "_test.go")
 }
