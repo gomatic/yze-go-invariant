@@ -43,3 +43,10 @@ func TestCopiedIsSafeToCopy(t *testing.T) {
 		t.Fatal("a copy shared state with its original")
 	}
 }
+
+// TestSplit carries Split's name and spells nothing.
+func TestSplit(t *testing.T) {}
+
+// TestWritersObserveNoMix spells Split under a name that does not carry it. The
+// two halves of the exemption are present in the file and in no single test.
+func TestWritersObserveNoMix(t *testing.T) { Split() }

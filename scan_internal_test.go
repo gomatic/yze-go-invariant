@@ -66,7 +66,9 @@ func TestMentionedInReadsEveryIdentifierInTheBody(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	src := "package a\nfunc TestThing(subject *outer.Marker) {\n\tsubject.Run(\"case\", func(inner *testing.T) { store.Replace(Direct) })\n}\n"
+	const src = "package a\n" +
+		"func TestThing(subject *outer.Marker) {\n" +
+		"\tsubject.Run(\"case\", func(inner *testing.T) { store.Replace(Direct) })\n}\n"
 	parsed, err := parser.ParseFile(token.NewFileSet(), "a_test.go", src, 0)
 	require.NoError(t, err)
 
@@ -130,4 +132,17 @@ func TestPackageDirIsTheDirectoryOfTheFirstFile(t *testing.T) {
 
 	assert.Equal(t, dirPath("/src/pkg"), packageDir(fset, []*ast.File{{Package: added.Pos(0)}}))
 	assert.Empty(t, packageDir(fset, nil), "no files means no directory")
+}
+
+// TestScopeOfReadsThePackageClause pins which testScope a file lands in, which
+// is the whole of what decides whether an unexported name could have been
+// written in it.
+func TestScopeOfReadsThePackageClause(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	want.Equal(externalTest, scopeOf("a_test"), "the external test package")
+	want.Equal(internalTest, scopeOf("a"), "the package's own test files")
+	want.Equal(internalTest, scopeOf("a_testing"), "only the exact _test suffix is external")
+	want.Equal(testScope("internal"), scopeOf(""), "an unnamed package is not the external one")
 }

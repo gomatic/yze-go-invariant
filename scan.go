@@ -83,14 +83,32 @@ func testsIn(read fileReader, path filePath) testCorpus {
 	if err != nil {
 		return nil
 	}
+	scope := scopeOf(packageClause(parsed.Name.Name))
 	var out testCorpus
 	for _, decl := range parsed.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok && strings.HasPrefix(fn.Name.Name, "Test") {
-			out = append(out, testFunc{name: testName(strings.ToLower(fn.Name.Name)), uses: mentionedIn(fn.Body)})
+			out = append(out, testFunc{
+				uses:  mentionedIn(fn.Body),
+				name:  testName(strings.ToLower(fn.Name.Name)),
+				scope: scope,
+			})
 		}
 	}
 	return out
+}
+
+// packageClause is the name a test file declares in its package clause.
+type packageClause string
+
+// scopeOf reads a test file's package clause: `package a_test` is the external
+// test package, which is unable to see the package's unexported names, and
+// anything else is the internal one, which can see them all.
+func scopeOf(pkg packageClause) testScope {
+	if strings.HasSuffix(string(pkg), "_test") {
+		return externalTest
+	}
+	return internalTest
 }
 
 // mentionedIn is every identifier appearing anywhere in a function body,

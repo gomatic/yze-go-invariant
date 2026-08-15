@@ -15,8 +15,8 @@ func TestIsNamedByMatchesCaseInsensitively(t *testing.T) {
 	want := assert.New(t)
 
 	corpus := testCorpus{
-		{name: "testossetheadrenameerrorpreserveshead", uses: usedNames{"SetHead": true}},
-		{name: "testparse", uses: usedNames{"Parse": true, "Materialize": true}},
+		{name: "testossetheadrenameerrorpreserveshead", uses: usedNames{"SetHead": true}, scope: internalTest},
+		{name: "testparse", uses: usedNames{"Parse": true, "Materialize": true}, scope: internalTest},
 	}
 	want.True(isNamedBy("SetHead", corpus))
 	want.True(isNamedBy("Parse", corpus))
@@ -32,16 +32,20 @@ func TestIsNamedByRequiresOneTestToDoBoth(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	forged := testCorpus{{name: "testreplace", uses: usedNames{}}}
+	want.False(isNamedBy("Replace", nil), "no tests to consult exempts nothing")
+	want.False(isNamedBy("Replace", testCorpus{}),
+		"a package whose only test file holds Benchmarks and Examples has tests but an empty corpus")
+
+	forged := testCorpus{{name: "testreplace", uses: usedNames{}, scope: internalTest}}
 	want.False(isNamedBy("Replace", forged), "an empty test named for the symbol acquires nothing")
 
 	split := testCorpus{
-		{name: "testreplace", uses: usedNames{"Store": true}},
-		{name: "testsomethingelse", uses: usedNames{"Replace": true}},
+		{name: "testreplace", uses: usedNames{"Store": true}, scope: internalTest},
+		{name: "testsomethingelse", uses: usedNames{"Replace": true}, scope: internalTest},
 	}
 	want.False(isNamedBy("Replace", split), "one test names it, another uses it, neither is the exemption")
 
-	whole := testCorpus{{name: "testreplaceisatomic", uses: usedNames{"Replace": true}}}
+	whole := testCorpus{{name: "testreplaceisatomic", uses: usedNames{"Replace": true}, scope: internalTest}}
 	want.True(isNamedBy("Replace", whole), "one test both names and uses it")
 }
 
@@ -53,12 +57,34 @@ func TestVerifiesCountsANameOnlyAsNothing(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	want.False(testFunc{name: "testreplace", uses: usedNames{}}.verifies("Replace"),
+	want.False(testFunc{name: "testreplace", uses: usedNames{}, scope: internalTest}.verifies("Replace"),
 		"the name alone acquires nothing, so it never counts")
-	want.False(testFunc{name: "testreplace", uses: nil}.verifies("Replace"),
+	want.False(testFunc{name: "testreplace", uses: nil, scope: internalTest}.verifies("Replace"),
 		"a body-less test mentions nothing, so its name alone never counts either")
-	want.False(testFunc{name: "testsomethingelse", uses: usedNames{"Replace": true}}.verifies("Replace"),
-		"a mention under an unrelated name is not this test's subject")
-	want.True(testFunc{name: "testreplaceisatomic", uses: usedNames{"Replace": true}}.verifies("Replace"),
-		"one test doing both is the whole exemption")
+	elsewhere := testFunc{name: "testsomethingelse", uses: usedNames{"Replace": true}, scope: internalTest}
+	want.False(elsewhere.verifies("Replace"), "a mention under an unrelated name is not this test's subject")
+
+	both := testFunc{name: "testreplaceisatomic", uses: usedNames{"Replace": true}, scope: internalTest}
+	want.True(both.verifies("Replace"), "one test doing both is the whole exemption")
+}
+
+// TestBlindToIsExactlyWhatGoForbids pins the one place the mention is not
+// required, and its two edges. An external test package cannot write an
+// unexported name, so demanding one there demands the impossible; it CAN write
+// an exported name through the qualifier, and an internal test can write either,
+// so neither of those is excused.
+func TestBlindToIsExactlyWhatGoForbids(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	external := testFunc{name: "testcanonical", uses: usedNames{}, scope: externalTest}
+	want.True(external.blindTo("canonical"), "an external test cannot see an unexported name")
+	want.False(external.blindTo("Canonical"), "it can see an exported one, through the qualifier")
+
+	internal := testFunc{name: "testcanonical", uses: usedNames{}, scope: internalTest}
+	want.False(internal.blindTo("canonical"), "an internal test can write either")
+	want.False(internal.blindTo("Canonical"))
+
+	want.True(external.verifies("canonical"), "so the name is the only evidence Go permits")
+	want.False(internal.verifies("canonical"), "while inside the package the mention is still required")
 }

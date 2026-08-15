@@ -17,40 +17,53 @@ func Verified() {}
 // names this symbol, so the claim is unverified.
 func Unverified() {} // want "Unverified documents an invariant"
 
-// Descriptive returns the number of segments it was given. The documentation
-// only describes; it asserts no property, so it is never reported.
+// Descriptive returns the number of segments it was given. This documentation
+// only describes, and asserts no property at all.
 func Descriptive() int { return 0 }
 
-// Forged writes atomically, so no reader observes a partial value. A test
-// SPELLS this symbol and does nothing whatever with it, which acquires no
-// verification at all, so the claim is still unverified.
+// Forged writes atomically, so no reader observes a partial value.
+// Case: a test carries this symbol's name and does nothing whatever with it.
 func Forged() {} // want "Forged documents an invariant"
 
-// Mentioned writes atomically, so no reader observes a partial value. The test
-// naming it refers to the symbol without calling it. That is the deliberate
-// FLOOR of the exemption — the probe reads syntax and cannot judge what a test
-// asserts — and it is cased here so the line is visible rather than assumed.
+// Mentioned writes atomically, so no reader observes a partial value.
+// Case: the test carrying its name spells the symbol without calling it, which
+// is the floor of the exemption.
 func Mentioned() {}
 
-// Indirect writes atomically, so no reader observes a partial value. The test
-// naming it reaches it only through a helper, so the test's own body mentions
-// nothing. The probe reads ONE function body and does not follow calls, which
-// is a documented scope limitation that errs toward reporting.
+// Indirect writes atomically, so no reader observes a partial value.
+// Case: the test carrying its name reaches it only through a helper, so that
+// test's own body spells nothing.
 func Indirect() {} // want "Indirect documents an invariant"
 
-// Copied is safe to copy: every field is a value. The test naming it reaches it
-// through a constructor and never writes the type's OWN name, so its claim is
-// reported — the helper limitation again, reached on the type path rather than
-// the function one.
+// Copied is safe to copy: every field is a value.
+// Case: the test carrying its name reaches it through a constructor, so that
+// test's own body spells no such type. Same shape as Indirect, on the type
+// path rather than the function one.
 type Copied struct{ retries int } // want "Copied documents an invariant"
 
 // NewCopied builds a Copied.
 func NewCopied() Copied { return Copied{retries: 3} }
 
-// Unnamed writes atomically, so no reader observes a partial value. A test USES
-// this symbol under a name that does not carry it. That is the other half of
-// the exemption on its own, and half an exemption is not the exemption.
+// Split writes atomically, so no reader observes a partial value.
+// Case: one test carries the name and a DIFFERENT test spells the symbol. Two
+// halves in two tests are not the exemption, and a corpus that pools a file's
+// identifiers cannot tell this apart from the real thing.
+func Split() {} // want "Split documents an invariant"
+
+// Unnamed writes atomically, so no reader observes a partial value.
+// Case: a test spells this symbol under a name that does not carry it.
 func Unnamed() {} // want "Unnamed documents an invariant"
+
+// blind always writes atomically.
+// Case: the only test carrying its name sits in the EXTERNAL test package,
+// which is unable to spell an unexported name at all.
+func blind() {}
+
+// unseen always writes atomically.
+// Case: blind's in-scope sibling. An INTERNAL test carries its name and was
+// able to spell it. Same claim, same shape, opposite verdict, and the only
+// difference between them is which test package names it.
+func unseen() {} // want "unseen documents an invariant"
 
 // internalHelper always writes atomically. Unexported symbols are IN scope: a
 // property claimed on an unexported helper is still a property nothing tests.
