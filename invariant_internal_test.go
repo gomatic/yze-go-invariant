@@ -21,15 +21,3 @@ func TestMessageNamesTheRemedy(t *testing.T) {
 			`exercise it from a test whose name carries it, or state the property as description`,
 		fmt.Sprintf(message, "Replace", "atomically"))
 }
-
-// TestClaimInFindsOnlyAssertions pins that asserting prose is recognised and
-// describing prose is not.
-func TestClaimInFindsOnlyAssertions(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	want.Equal(claimText("atomically"), claimIn("Write lands atomically."))
-	want.Equal(claimText("safe to"), claimIn("Store is safe to copy."))
-	want.Empty(claimIn("Parse returns the parsed document."))
-	want.Empty(claimIn(""))
-}

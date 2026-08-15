@@ -115,6 +115,31 @@ func unseen() {}
 // Reveal is the exported entry an external test drives to reach unseen.
 func Reveal() { unseen() }
 
+// Run is the fleet's mandated domain entry point, and its name is also the
+// method the subtest idiom calls on *testing.T. Its own documentation only
+// describes, so it is the collision target rather than a subject.
+func Run() { staged() }
+
+// staged never drops a record.
+// Case: the only test naming it writes `t.Run(...)` and nothing else, so the
+// sole route here is the SELECTED half of a method call on a VALUE. A selection
+// from a value is a member of that value, not a declaration of this package, so
+// it must not expand into what the package's own Run writes down.
+func staged() {} // want "staged documents an invariant"
+
+// Store is the value whose method a test drives its subject through.
+type Store struct{}
+
+// Save is Store's method, and the only route to stored.
+func (s Store) Save() { stored() }
+
+// stored writes atomically, so no reader observes a partial value.
+// Case: staged's sibling and the other side of the same boundary. The test
+// naming it reaches it through `s.Save()` — a selection from a value whose
+// selected half the package really does declare, as a METHOD — so that half
+// denotes a declaration this probe holds and expanding it is sound.
+func stored() {}
+
 // internalHelper writes atomically, and nothing names it. Unexported symbols
 // are IN scope: a property claimed on an unexported helper is still a property
 // nothing tests.

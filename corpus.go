@@ -19,14 +19,56 @@ import (
 type testName string
 
 // usedNames are the identifiers a test function reaches: the ones its own body
-// mentions, and the ones mentioned by every function reachable from it.
+// spells, and the ones spelled by every declaration reachable from it.
 type usedNames map[symbolName]bool
+
+// spelled is what one node writes down, split by what each spelling can DENOTE.
+// A name written bare, or qualified by this package's own name, denotes a
+// declaration of this package. A name written as the selected half of any other
+// qualified reference denotes a member of the value it is selected from — a
+// field, which writes nothing, or a method, whose body it does write — or a
+// symbol of another package, which this package does not declare at all.
+//
+// The split exists because pooling the two is unsound and was measured to be:
+// `t.Run("case", ...)` is the house subtest idiom and `func Run(ctx, logger,
+// Config, args...)` is this fleet's mandated domain entry point, so a walk that
+// takes every selected half as a package-level name credits every test in every
+// such package with reaching whatever the entry point touches.
+type spelled struct {
+	plain    usedNames
+	selected usedNames
+}
+
+// newSpelled is an empty spelling set.
+func newSpelled() spelled {
+	return spelled{plain: usedNames{}, selected: usedNames{}}
+}
+
+// absorb folds another node's spellings into these, each into its own half.
+func (written spelled) absorb(other spelled) {
+	written.plain.absorb(other.plain)
+	written.selected.absorb(other.selected)
+}
+
+// reference is one name together with what its spelling can denote, which is
+// what decides where the walk looks the name up.
+type reference struct {
+	name     symbolName
+	isMember bool
+}
 
 // testFunc is one test function as this probe reads it: the identifiers it
 // reaches, which say whether it touches a symbol at all, and the name, which
 // says which symbol it is ABOUT.
 type testFunc struct {
 	uses usedNames
+	name testName
+}
+
+// seededTest is one test function before its reach is expanded: its name, and
+// what its own body spells.
+type seededTest struct {
+	seed spelled
 	name testName
 }
 
@@ -50,13 +92,28 @@ func (fn testFunc) names(symbol symbolName) bool {
 	return strings.Contains(string(fn.name), strings.ToLower(string(symbol)))
 }
 
-// declarations is what each declared name writes down — a function's body,
-// signature and receiver, a value's initialiser and declared type, a type's own
-// definition — keyed by the name that declares it. It is keyed by NAME rather
-// than by identity because this probe has no type information: it reads two
-// test packages and the package under analysis as syntax, so a method and a
-// function sharing a name share an entry, and what they write down is pooled.
-type declarations map[symbolName]usedNames
+// writes is what each declared name writes down, keyed by that name.
+type writes map[symbolName]spelled
+
+// declarations is what a package's declarations write down, in two tables
+// because a name's SPELLING decides which of them it can reach. A bare or
+// self-qualified name reaches a package-level declaration; a name selected from
+// a value reaches a method, and nothing else — a field writes nothing and
+// another package's symbol is not declared here.
+//
+// Both tables are keyed by NAME rather than by identity because this probe has
+// no type information: it reads two test packages and the package under
+// analysis as syntax, so two methods sharing a name share an entry and what
+// they write down is pooled.
+type declarations struct {
+	plain   writes
+	methods writes
+}
+
+// newDeclarations is an empty pair of tables.
+func newDeclarations() declarations {
+	return declarations{plain: writes{}, methods: writes{}}
+}
 
 // absorb folds every name in other into these.
 func (uses usedNames) absorb(other usedNames) {
@@ -67,24 +124,46 @@ func (uses usedNames) absorb(other usedNames) {
 
 // add records what one declaration writes down, unioning into any entry the
 // same name already has.
-func (decls declarations) add(name symbolName, uses usedNames) {
-	into, seen := decls[name]
-	if !seen {
-		into = usedNames{}
-		decls[name] = into
+func (table writes) add(name symbolName, written spelled) {
+	into, isSeen := table[name]
+	if !isSeen {
+		into = newSpelled()
+		table[name] = into
 	}
-	into.absorb(uses)
+	into.absorb(written)
 }
 
-// merge folds another file's declarations into these.
+// merge folds another table into this one.
+func (table writes) merge(other writes) {
+	for name, written := range other {
+		table.add(name, written)
+	}
+}
+
+// merge folds another file's declarations into these, table by table.
 func (decls declarations) merge(other declarations) {
-	for name, uses := range other {
-		decls.add(name, uses)
-	}
+	decls.plain.merge(other.plain)
+	decls.methods.merge(other.methods)
 }
 
-// reached expands what a test's own body mentions through what each name it
-// mentions writes down, and through theirs, until nothing new is found. That is
+// lookup is what one reference denotes, and what that writes down.
+//
+// A name spelled as a declaration always denotes something: this probe has no
+// types, so the package's Replace is indistinguishable from a local variable,
+// label or field of that name, which is the standing limitation the doc comment
+// declares. A name selected from a VALUE denotes only a method this package
+// declares — a selection matching no method is a field or another package's
+// symbol, which writes nothing here and names nothing here.
+func (decls declarations) lookup(ref reference) (spelled, bool) {
+	if !ref.isMember {
+		return decls.plain[ref.name], true
+	}
+	written, isMethod := decls.methods[ref.name]
+	return written, isMethod
+}
+
+// reached expands what a test's own body spells through what each name it
+// spells writes down, and through theirs, until nothing new is found. That is
 // what makes the exemption a statement about the test rather than about its
 // spelling: a test that drives its subject through a helper, a constructor or
 // an exported entry point has touched it, and the one-hop form of this walk
@@ -92,28 +171,40 @@ func (decls declarations) merge(other declarations) {
 //
 // The visited set is the walk's cycle guard rather than a clause of the rule:
 // two helpers that call each other are ordinary Go, and expanding one through
-// the other without remembering where the walk has been does not terminate.
-func (decls declarations) reached(seed usedNames) usedNames {
+// the other without remembering where the walk has been does not terminate. It
+// is keyed by REFERENCE rather than by name because the same name reached both
+// ways is two different lookups.
+func (decls declarations) reached(seed spelled) usedNames {
 	out := usedNames{}
-	pending := toExpand(seed)
+	seen := map[reference]bool{}
+	pending := referencesIn(seed)
 	for len(pending) > 0 {
 		last := len(pending) - 1
-		name := pending[last]
+		ref := pending[last]
 		pending = pending[:last]
-		if out[name] {
+		if seen[ref] {
 			continue
 		}
-		out[name] = true
-		pending = append(pending, toExpand(decls[name])...)
+		seen[ref] = true
+		written, isDenoted := decls.lookup(ref)
+		if !isDenoted {
+			continue
+		}
+		out[ref.name] = true
+		pending = append(pending, referencesIn(written)...)
 	}
 	return out
 }
 
-// toExpand is a mention set as a list, so the walk can consume it as a stack.
-func toExpand(uses usedNames) []symbolName {
-	out := make([]symbolName, 0, len(uses))
-	for name := range uses {
-		out = append(out, name)
+// referencesIn is a spelling set as a list, so the walk can consume it as a
+// stack, each name carrying what its spelling can denote.
+func referencesIn(written spelled) []reference {
+	out := make([]reference, 0, len(written.plain)+len(written.selected))
+	for name := range written.plain {
+		out = append(out, reference{name: name})
+	}
+	for name := range written.selected {
+		out = append(out, reference{name: name, isMember: true})
 	}
 	return out
 }
@@ -122,11 +213,14 @@ func toExpand(uses usedNames) []symbolName {
 // against which a symbol is looked for.
 type testCorpus []testFunc
 
-// expanded replaces each test's own mentions with everything it reaches.
-func expanded(corpus testCorpus, decls declarations) testCorpus {
-	out := make(testCorpus, 0, len(corpus))
-	for _, fn := range corpus {
-		out = append(out, testFunc{name: fn.name, uses: decls.reached(fn.uses)})
+// testSeeds are a package's test functions as read off disk, before the walk.
+type testSeeds []seededTest
+
+// expanded replaces each test's own spellings with everything it reaches.
+func expanded(seeds testSeeds, decls declarations) testCorpus {
+	out := make(testCorpus, 0, len(seeds))
+	for _, fn := range seeds {
+		out = append(out, testFunc{name: fn.name, uses: decls.reached(fn.seed)})
 	}
 	return out
 }

@@ -33,6 +33,35 @@
 // So a test that drives its subject through a helper, a constructor, an
 // exported entry point or `var Analyzer = newAnalyzer()` has reached it.
 //
+// # What a spelling can denote, which is the qualified-reference rule
+//
+// A name written bare, or qualified by the package under analysis — its own
+// package name, or an alias the file binds to its import path — refers to a
+// DECLARATION of that package. `a.Reveal()` is why that half matters: an
+// external `package a_test` cannot spell an unexported name at all, so a
+// package-qualified call is its only route to one.
+//
+// A name written as the selected half of any OTHER qualified reference is
+// selected from a value, so it refers to a MEMBER: a method, whose body it
+// reaches, or a field, which declares nothing here. It never refers to a
+// package-level declaration.
+//
+// Pooling those two was a soundness defect, and this suite is why. Its own
+// mandated domain signature is `func Run(ctx, logger, Config, args...)` and
+// `t.Run("case", func(t *testing.T) {...})` is the house subtest idiom, so a
+// walk taking every selected half as a package-level name credits every subtest
+// in such a package with everything the entry point touches. Reproduced on
+// `gomatic/template.cli`'s own greet command, where a claim on `compose`,
+// reachable only from `Run`, is silenced by a table test that never mentions
+// it; 53 fleet packages carry that shape. Deriving the package's own spelling
+// from the last element of its import PATH does not work either — this fleet
+// puts package `authority` at `.../go-authority`.
+//
+// Crediting the method half is not decoration: dropping it adds 208 findings
+// over 279 fleet modules, on symbols their tests drive through a method —
+// `gomatic/go-authority`'s `canonical` among them, the case the deleted
+// unexported carve-out existed for.
+//
 // The declarations are in that list because Go keeps type names there. A type
 // identifier is almost never spelled inside a body: callers build values with
 // composite literals, untyped constants and :=, so a walk over bodies alone can
@@ -42,8 +71,9 @@
 //
 // The transitive closure is a design decision and not an accident. Stopping at
 // the first hop recovers almost nothing: over 279 fleet modules one hop leaves
-// 468 findings where the full walk leaves 298, so the shapes this probe was
-// wrongly reporting sit further out than a single call.
+// 476 findings where the full walk leaves 300, and stopping at the test's own
+// body leaves 657, so the shapes this probe was wrongly reporting sit further
+// out than a single call.
 //
 // The floor is a REACH rather than an assertion, on purpose, and a reach is a
 // SPELLING rather than a reference. This probe reads the tests as syntax with
@@ -58,9 +88,10 @@
 // field of the same name. Only a mention in a COMMENT fails to silence.
 //
 // And for most findings the cheapest silence is not one line but NONE. Measured
-// over the fleet sweep below, 252 of the 298 findings are on symbols some test
-// already reaches — they are reported only because no test's NAME happens to
-// carry the symbol — so the whole forgery is renaming an existing test, which
+// over the fleet sweep below, 253 of the 300 findings are on symbols some test
+// already reaches — deleting the naming half outright leaves 47 — so they are
+// reported only because no test's NAME happens to carry the symbol, and the
+// whole forgery is renaming an existing test, which
 // adds no line and appears in no body. That is the honest statement of what the
 // conjunction buys: it is not that forging is hard, and it is not that a reader
 // judging the claim will find the forgery. It is only that both halves have to
@@ -68,10 +99,15 @@
 //
 // # Documented scope limitations
 //
-// The walk is keyed by NAME, having no types to key it by anything better, so a
-// function and a method sharing a name share an entry and their mentions are
-// pooled — and a helper whose name collides with something the test writes for
-// another reason is expanded anyway. The closure is unbounded: a test that
+// The walk is keyed by NAME, having no types to key it by anything better, so
+// two methods sharing a name share an entry and their mentions are pooled — and
+// a helper whose name collides with something the test writes for another
+// reason is expanded anyway. That is a live hole and not only a caveat: a test
+// declaring `var capOf int` is credited with reaching everything the package's
+// `capOf` writes down, including the `Cap` in its signature, and no harness is
+// needed to write it. Splitting the tables by spelling narrows this to
+// same-kind collisions; it does not close it, and closing it needs types the
+// pass does not have on the test side. The closure is unbounded: a test that
 // drives a large entry point reaches most of the package. What bounds the
 // exemption is the other half, since a symbol is only ever excused by a test
 // whose NAME carries it.
@@ -84,9 +120,12 @@
 // and a Benchmark all exercise their subject under go test and none of them
 // counts.
 //
-// A qualified reference counts — store.Replace and a.Replace both reach
-// Replace — so a method or another package's symbol sharing the name satisfies
-// the reach. There is no type information on the test side.
+// A qualified reference counts as far as its spelling allows, per the section
+// above: `a.Replace` reaches the package's Replace, `store.Replace` reaches a
+// METHOD named Replace and nothing else, and a selection matching no method is
+// a field and reaches nothing. There is no type information on the test side,
+// so `store` is not known to be a value of this package's type and `a` is
+// matched by spelling.
 //
 // The walk follows names, so a symbol reached only through a route that writes
 // no name is still reported. Reflection is the standing example: encoding/json
@@ -106,19 +145,24 @@
 //
 // Measured on 2026-08-15 over the 279 fleet modules this suite is developed
 // against, with 39 of them failing to load and therefore measured as nothing at
-// all, this build reports 298 findings across 61 modules. Against the two rules
-// it succeeds, and both comparisons matter:
+// all, this build reports 300 findings across 61 modules. Against each rule it
+// succeeds, and every comparison matters:
 //
-//   - the NAME-ONLY rule reported 270 across 48. This build adds 28 and
+//   - the NAME-ONLY rule reported 270 across 48. This build adds 30 and
 //     silences none of them, so against that baseline it is strictly a
 //     tightening.
 //   - the OWN-BODY rule that briefly replaced it reported 495 across 94. This
-//     build silences 201 of those and adds 4, so against THAT baseline it is a
+//     build silences 200 of those and adds 5, so against THAT baseline it is a
 //     large loosening, and a maintainer reading only the first bullet would
 //     have it backwards.
+//   - the build that pooled every selected half with the package's own names
+//     reported 298 across 61. This build adds 2 and silences none, because that
+//     defect is LATENT: 53 fleet packages carry the `func Run` / `t.Run` shape,
+//     and today only two of them also carry a claim on a symbol nothing else
+//     reaches. A fleet delta of 2 is not evidence that the defect is small.
 //
-// Restate both whenever the rule changes; a number here describing a build that
-// never shipped is a defect in the standard rather than a footnote.
+// Restate all of them whenever the rule changes; a number here describing a
+// build that never shipped is a defect in the standard rather than a footnote.
 //
 // This is a PROBE, not a gate. Its precision is bounded by English rather than
 // by Go — the keyword set will match prose that is descriptive rather than
@@ -146,15 +190,6 @@ import (
 // message is the diagnostic emitted for an unverified documented invariant.
 const message = "%s documents an invariant (%q) that no test both names and reaches: " +
 	"exercise it from a test whose name carries it, or state the property as description"
-
-// claims are the words a doc comment uses to assert a property rather than to
-// describe behaviour. Kept deliberately small: each addition widens the probe's
-// noise, and the set earns its place by what it finds.
-var claims = []string{
-	"atomically", "atomic", "never", "always", "exactly", "unambiguous",
-	"guarantee", "byte-identical", "byte-exact", "idempotent", "safe to",
-	"deduplicat", "must not", "cannot",
-}
 
 // Analyzer reports documented invariants that no test names and reaches.
 var Analyzer = &analysis.Analyzer{
@@ -195,7 +230,8 @@ type finding struct {
 func run(pass *analysis.Pass) (any, error) {
 	ins := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	dir := packageDir(pass.Fset, pass.Files)
-	tested, hasTests := testedSymbols(readDir, readFile, dir, packageDeclarations(pass.Files))
+	id := packageIdentity{name: packageName(pass.Pkg.Name()), path: packagePath(pass.Pkg.Path())}
+	tested, hasTests := testedSymbols(readDir, readFile, dir, id, packageDeclarations(pass.Files, id))
 	if !hasTests {
 		return nil, nil
 	}
@@ -229,18 +265,6 @@ func collect(info *types.Info, node ast.Node, tested testCorpus, into map[findin
 			into[finding{symbol: item.symbol, claim: claim}] = item.pos
 		}
 	}
-}
-
-// claimIn returns the first property-asserting phrase in doc, or empty when the
-// documentation only describes.
-func claimIn(doc docText) claimText {
-	lower := strings.ToLower(string(doc))
-	for _, claim := range claims {
-		if strings.Contains(lower, claim) {
-			return claimText(claim)
-		}
-	}
-	return ""
 }
 
 // sorted returns the findings in source order so output is deterministic.

@@ -16,6 +16,14 @@ import (
 // errRead is the failure an injected reader returns to exercise fail-open paths.
 const errRead errs.Const = "cannot read"
 
+// thisPackage is the fixture identity: the package under analysis is named `a`
+// and sits at the import path `a`, as it does under analysistest.
+var thisPackage = packageIdentity{name: "a", path: "a"}
+
+// thisFile is the set of names a file uses for that package when it imports it
+// without an alias.
+var thisFile = selfNames{"a": true}
+
 // parseSource parses one source file for the tests that need an *ast.File.
 func parseSource(t *testing.T, name, src string) *ast.File {
 	t.Helper()
@@ -60,7 +68,7 @@ func TestTestedSymbolsReadsBothTestPackages(t *testing.T) {
 		return []byte(src), nil
 	}
 
-	got, hasTests := testedSymbols(dir, read, "/pkg", nil)
+	got, hasTests := testedSymbols(dir, read, "/pkg", thisPackage, newDeclarations())
 	require.True(t, hasTests)
 
 	assert.True(t, isNamedBy("InternalThing", got), "named and reached by the internal test package")
@@ -90,113 +98,16 @@ func TestTestedSymbolsReachesThroughBothSetsOfBodies(t *testing.T) {
 	}
 	dir := func(dirPath) ([]string, error) { return []string{"a_test.go", "a_ext_test.go"}, nil }
 	read := func(path string) ([]byte, error) { return []byte(files[filepath.Base(path)]), nil }
-	pkg := declarations{"NewConstructed": usedNames{"Constructed": true}}
+	pkg := newDeclarations()
+	pkg.plain.add("NewConstructed", plainly("Constructed"))
 
-	got, hasTests := testedSymbols(dir, read, "/pkg", pkg)
+	got, hasTests := testedSymbols(dir, read, "/pkg", thisPackage, pkg)
 	require.True(t, hasTests)
 
 	assert.True(t, isNamedBy("Local", got), "reached through a helper in the same test file")
 	assert.True(t, isNamedBy("Shared", got), "reached through a helper in the external test package")
 	assert.True(t, isNamedBy("Constructed", got), "reached through a constructor in the analyzed package")
 	assert.False(t, isNamedBy("Forged", got), "an empty test named for its subject reaches nothing")
-}
-
-// TestDeclaredInReadsEveryBodyAndInitialiser pins what the reach walk expands
-// through: every function and method a file declares, keyed by its own name,
-// and every var or const initialiser, keyed by the name it initialises. The
-// second is not decoration — this fleet builds its analyzers as
-// `var Analyzer = newAnalyzer()`, so a walk that stopped at functions would
-// stop one hop short of everything a test reaches by driving one.
-func TestDeclaredInReadsEveryBodyAndInitialiser(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	const src = "package a\n" +
-		"import \"other\"\n" +
-		"var Table, Second = build(), other.Make()\n" +
-		"var Typed Declared\n" +
-		"const Bare = 1\n" +
-		"type Shape struct{ field Corner }\n" +
-		"func plain() { Reached }\n" +
-		"func typed(in Input) Output { Reached }\n" +
-		"func (s Store) Method() { Selected }\n" +
-		"func Bodyless()\n"
-	got := declaredIn(parseSource(t, "a.go", src))
-
-	want.Equal(usedNames{"Reached": true}, got["plain"])
-	want.Equal(usedNames{"Reached": true, "in": true, "Input": true, "Output": true}, got["typed"],
-		"a signature is where Go keeps type names, so it is part of what the function writes down")
-	want.Equal(usedNames{"Selected": true, "s": true, "Store": true}, got["Method"],
-		"a method is keyed by its own name, and its receiver type is one of its names")
-	want.Empty(got["Bodyless"], "a declaration with nothing written down reaches nothing")
-	want.Equal(usedNames{"build": true, "other": true, "Make": true}, got["Table"],
-		"a value reaches what its initialiser writes, all of them")
-	want.Equal(got["Table"], got["Second"], "each name in the spec carries the same initialiser")
-	want.Equal(usedNames{"Declared": true}, got["Typed"], "an uninitialised value still names its type")
-	want.Empty(got["Bare"], "a literal initialiser reaches nothing")
-	want.Equal(usedNames{"field": true, "Corner": true}, got["Shape"],
-		"a struct declaration is where the types of its fields are spelled")
-	want.NotContains(got, symbolName("other"), "an import declares no reachable body")
-}
-
-// TestWrittenByReadsBodySignatureAndReceiver pins what ONE function
-// declaration writes down, which is the whole of what a test reaches by naming
-// it. The signature and the receiver are in there deliberately: a Go type
-// identifier lives in declarations, so a walk over bodies alone could not reach
-// a type at all.
-func TestWrittenByReadsBodySignatureAndReceiver(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	const src = "package a\nfunc (s Store) Method(in Input) Output { Selected }\nfunc Bare()\n"
-	decls := parseSource(t, "a.go", src).Decls
-
-	want.Equal(
-		usedNames{"Selected": true, "in": true, "Input": true, "Output": true, "s": true, "Store": true},
-		writtenBy(decls[0].(*ast.FuncDecl)),
-	)
-	want.Empty(writtenBy(decls[1].(*ast.FuncDecl)), "a plain declaration with no body writes down nothing")
-}
-
-// TestPackageDeclarationsPoolsEveryFileInThePass pins that the analyzed package's own
-// bodies arrive as one map, however many files declare them.
-func TestPackageDeclarationsPoolsEveryFileInThePass(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	got := packageDeclarations([]*ast.File{
-		parseSource(t, "a.go", "package a\nfunc First() { Alpha }\n"),
-		parseSource(t, "b.go", "package a\nfunc Second() { Beta }\n"),
-	})
-
-	want.Equal(usedNames{"Alpha": true}, got["First"])
-	want.Equal(usedNames{"Beta": true}, got["Second"])
-	want.Empty(packageDeclarations(nil), "a pass with no files declares nothing")
-}
-
-// TestMentionedInReadsEveryIdentifierInTheBody pins what counts as a test USING
-// a symbol: any identifier the body writes, either half of a qualified
-// reference, and everything inside a subtest closure including that closure's
-// own signature. The boundary is the OUTER declaration — its name and its
-// parameter types are not things the test uses.
-func TestMentionedInReadsEveryIdentifierInTheBody(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	const src = "package a\n" +
-		"func TestThing(subject *outer.Marker) {\n" +
-		"\tsubject.Run(\"case\", func(inner *testing.T) { store.Replace(Direct) })\n}\n"
-	parsed := parseSource(t, "a_test.go", src)
-
-	got := mentionedIn(parsed.Decls[0].(*ast.FuncDecl).Body)
-	want.True(got["Replace"], "the selected half of store.Replace")
-	want.True(got["store"], "the qualifier half of store.Replace")
-	want.True(got["Direct"], "a plain identifier")
-	want.True(got["inner"], "an identifier inside a subtest closure")
-	want.True(got["T"], "a subtest closure's own signature is inside the body")
-	want.False(got["TestThing"], "the test's own name is not something it uses")
-	want.False(got["Marker"], "the OUTER signature is outside the body")
-	want.False(got["outer"], "the OUTER signature is outside the body")
 }
 
 // TestTestedSymbolsFailsOpen pins that a filesystem failure contributes nothing
@@ -206,16 +117,22 @@ func TestTestedSymbolsFailsOpen(t *testing.T) {
 	want := assert.New(t)
 
 	unreadableDir := func(dirPath) ([]string, error) { return nil, errRead }
-	names, hasTests := testedSymbols(unreadableDir, os.ReadFile, "/pkg", nil)
+	names, hasTests := testedSymbols(unreadableDir, os.ReadFile, "/pkg", thisPackage, newDeclarations())
 	want.Empty(names)
 	want.False(hasTests, "an unreadable directory yields no corpus to judge against")
 
 	noTests := func(dirPath) ([]string, error) { return []string{"a.go", "README.md"}, nil }
-	_, hasTests = testedSymbols(noTests, os.ReadFile, "/pkg", nil)
+	_, hasTests = testedSymbols(noTests, os.ReadFile, "/pkg", thisPackage, newDeclarations())
 	want.False(hasTests, "a package with no tests is the coverage gate's finding, not this probe's")
 
 	oneTest := func(dirPath) ([]string, error) { return []string{"a_test.go"}, nil }
-	names, hasTests = testedSymbols(oneTest, func(string) ([]byte, error) { return nil, errRead }, "/pkg", nil)
+	names, hasTests = testedSymbols(
+		oneTest,
+		func(string) ([]byte, error) { return nil, errRead },
+		"/pkg",
+		thisPackage,
+		newDeclarations(),
+	)
 	want.Empty(names)
 	want.True(hasTests, "an unreadable test file still means the package is tested")
 
@@ -223,7 +140,8 @@ func TestTestedSymbolsFailsOpen(t *testing.T) {
 		oneTest,
 		func(string) ([]byte, error) { return []byte("package a\n???"), nil },
 		"/pkg",
-		nil,
+		thisPackage,
+		newDeclarations(),
 	)
 	want.Empty(names)
 }

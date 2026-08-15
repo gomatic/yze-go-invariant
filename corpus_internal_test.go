@@ -76,19 +76,79 @@ func TestReachedFollowsEveryCalleeTransitively(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	bodies := declarations{
-		"outer": usedNames{"inner": true},
-		"inner": usedNames{"Chained": true},
-	}
-	got := bodies.reached(usedNames{"outer": true, "Direct": true})
+	bodies := newDeclarations()
+	bodies.plain.add("outer", plainly("inner"))
+	bodies.plain.add("inner", plainly("Chained"))
+	got := bodies.reached(plainly("outer", "Direct"))
 
 	want.True(got["Direct"], "what the test spells itself is reached")
 	want.True(got["outer"], "the helper it names is reached")
 	want.True(got["inner"], "and the helper that helper names")
 	want.True(got["Chained"], "and the subject two hops out")
 	want.False(got["Absent"], "nothing else is")
-	want.Empty(bodies.reached(usedNames{}), "a test that spells nothing reaches nothing")
-	want.Empty(bodies.reached(nil), "and neither does one with no body")
+	want.Empty(bodies.reached(newSpelled()), "a test that spells nothing reaches nothing")
+	want.Empty(bodies.reached(spelled{}), "and neither does one with no body")
+}
+
+// TestLookupDenotesADeclarationAlwaysAndAMemberOnlyAsAMethod pins the one
+// question the walk asks of every name, in both directions and at its boundary.
+// A name spelled as a declaration denotes one whether or not the package
+// declares it — this probe has no types, so it cannot tell the package's Cap
+// from a local of that name, and reporting a claim because a name is unknown
+// would be a finding about the walk. A name selected from a value denotes only
+// a method: a selection matching none is a field or another package's symbol,
+// and neither is declared here.
+func TestLookupDenotesADeclarationAlwaysAndAMemberOnlyAsAMethod(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	decls := newDeclarations()
+	decls.plain.add("Run", plainly("staged"))
+	decls.methods.add("Save", plainly("stored"))
+
+	written, isDenoted := decls.lookup(reference{name: "Run"})
+	want.True(isDenoted, "a bare name denotes a declaration")
+	want.Equal(usedNames{"staged": true}, written.plain, "and writes down what that declaration writes")
+
+	_, isDenoted = decls.lookup(reference{name: "Absent"})
+	want.True(isDenoted, "a bare name this package never declares still denotes one, having no types to say otherwise")
+
+	written, isDenoted = decls.lookup(reference{name: "Save", isMember: true})
+	want.True(isDenoted, "a selection matching a method denotes that method")
+	want.Equal(usedNames{"stored": true}, written.plain, "and writes down its body")
+
+	_, isDenoted = decls.lookup(reference{name: "Run", isMember: true})
+	want.False(isDenoted, "the same name selected from a value is not the package's Run")
+
+	_, isDenoted = decls.lookup(reference{name: "retries", isMember: true})
+	want.False(isDenoted, "and a selection matching no method at all is a field, which declares nothing here")
+}
+
+// TestReachedResolvesASelectionAgainstMethodsOnly is the discrimination this
+// walk exists to make, cased in both directions. The selected half of a
+// selection from a VALUE denotes a member of that value: a method, whose body
+// it reaches, or a field, which declares nothing here. It never denotes a
+// package-level declaration — `t.Run(...)` is the house subtest idiom and
+// `func Run(...)` is this fleet's mandated entry point, and pooling the two
+// credits every such test with everything the entry point touches.
+func TestReachedResolvesASelectionAgainstMethodsOnly(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	bodies := newDeclarations()
+	bodies.plain.add("Run", plainly("staged"))
+	bodies.methods.add("Save", plainly("stored"))
+
+	fromValue := bodies.reached(selecting("Run", "Save", "retries"))
+	want.False(fromValue["Run"], "a selection from a value is not the package's Run")
+	want.False(fromValue["staged"], "so it reaches nothing that Run writes")
+	want.True(fromValue["Save"], "a selection matching a method denotes that method")
+	want.True(fromValue["stored"], "and reaches what its body writes")
+	want.False(fromValue["retries"], "a selection matching no method is a field, and denotes nothing here")
+
+	fromPackage := bodies.reached(plainly("Run"))
+	want.True(fromPackage["Run"], "the same name spelled bare, or qualified by this package, is the declaration")
+	want.True(fromPackage["staged"], "and reaches what it writes")
 }
 
 // TestReachedTerminatesOnMutualRecursion is the walk's cycle guard, written
@@ -99,14 +159,34 @@ func TestReachedTerminatesOnMutualRecursion(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	bodies := declarations{
-		"ping": usedNames{"pong": true},
-		"pong": usedNames{"ping": true, "Cycled": true},
-	}
-	got := bodies.reached(usedNames{"ping": true})
+	bodies := newDeclarations()
+	bodies.plain.add("ping", plainly("pong"))
+	bodies.plain.add("pong", plainly("ping", "Cycled"))
+	got := bodies.reached(plainly("ping"))
 
 	want.True(got["Cycled"], "the subject past the cycle is still reached")
 	want.Len(got, 3, "and each name in the cycle is expanded once")
+}
+
+// TestReachedRemembersHowANameWasSpelled pins the visited set's key. The same
+// name reached both as a declaration and as a selection from a value is two
+// different lookups in two different tables, so a walk keyed by name alone
+// would drop whichever it met second.
+func TestReachedRemembersHowANameWasSpelled(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	bodies := newDeclarations()
+	bodies.plain.add("Close", plainly("flushed"))
+	bodies.methods.add("Close", plainly("released"))
+
+	both := newSpelled()
+	both.absorb(plainly("Close"))
+	both.absorb(selecting("Close"))
+	got := bodies.reached(both)
+
+	want.True(got["flushed"], "what the package's own Close writes")
+	want.True(got["released"], "and what the method of that name writes")
 }
 
 // TestDeclarationsPoolNamesakes pins that this probe keys a declaration by NAME, having
@@ -117,13 +197,17 @@ func TestDeclarationsPoolNamesakes(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	bodies := declarations{}
-	bodies.add("Run", usedNames{"Replace": true})
-	bodies.add("Run", usedNames{"Delete": true})
-	bodies.merge(declarations{"Run": usedNames{"Insert": true}, "Other": usedNames{"Skip": true}})
+	bodies := newDeclarations()
+	bodies.plain.add("Run", plainly("Replace"))
+	bodies.plain.add("Run", plainly("Delete"))
+	other := newDeclarations()
+	other.plain.add("Run", plainly("Insert"))
+	other.methods.add("Save", plainly("Skip"))
+	bodies.merge(other)
 
-	want.Equal(usedNames{"Replace": true, "Delete": true, "Insert": true}, bodies["Run"])
-	want.Equal(usedNames{"Skip": true}, bodies["Other"], "a name nothing else carries stands alone")
+	want.Equal(usedNames{"Replace": true, "Delete": true, "Insert": true}, bodies.plain["Run"].plain)
+	want.Equal(usedNames{"Skip": true}, bodies.methods["Save"].plain, "a merge carries each table into its own")
+	want.NotContains(bodies.plain, symbolName("Save"), "and a method never lands among the declarations")
 }
 
 // TestExpandedCreditsEachTestWithWhatItReaches pins the seam: the corpus a
@@ -132,10 +216,32 @@ func TestExpandedCreditsEachTestWithWhatItReaches(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	corpus := testCorpus{{name: "testchained", uses: usedNames{"outer": true}}}
-	bodies := declarations{"outer": usedNames{"Chained": true}}
+	seeds := testSeeds{{name: "testchained", seed: plainly("outer")}}
+	bodies := newDeclarations()
+	bodies.plain.add("outer", plainly("Chained"))
 
-	want.True(isNamedBy("Chained", expanded(corpus, bodies)), "reached through the helper")
-	want.False(isNamedBy("Chained", corpus), "and not before the expansion")
+	want.True(isNamedBy("Chained", expanded(seeds, bodies)), "reached through the helper")
+	want.False(isNamedBy("Chained", testCorpus{{name: "testchained", uses: usedNames{"outer": true}}}),
+		"and not before the expansion")
 	want.Empty(expanded(nil, bodies), "no tests expand to no corpus")
+}
+
+// plainly is a spelling set of bare names, the way a body spells them when it
+// writes no qualified reference at all.
+func plainly(names ...symbolName) spelled {
+	written := newSpelled()
+	for _, name := range names {
+		written.plain[name] = true
+	}
+	return written
+}
+
+// selecting is a spelling set of names written as the selected half of a
+// selection from a value.
+func selecting(names ...symbolName) spelled {
+	written := newSpelled()
+	for _, name := range names {
+		written.selected[name] = true
+	}
+	return written
 }

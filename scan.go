@@ -1,6 +1,7 @@
-// This file holds the test scan: reading a package's directory to learn which
-// symbols its tests name, and reading what every declaration writes down — the
-// test files' and the analyzed package's — to learn what those tests reach.
+// This file holds the test scan: reading a package's directory off disk to
+// learn which test functions it declares and which symbols each of them names.
+// What a declaration writes down, and what each name it writes can denote, is
+// spelling.go's.
 //
 // It is separate from the probe because it is a separate concern — the probe
 // reads doc comments in one compilation unit, this reads files off disk — and
@@ -46,7 +47,13 @@ type (
 // would add noise without adding information. "No test names this symbol" and
 // "there are no tests" are different problems with different owners, so the
 // second return distinguishes them.
-func testedSymbols(dir dirReader, file fileReader, at dirPath, pkg declarations) (testCorpus, bool) {
+func testedSymbols(
+	dir dirReader,
+	file fileReader,
+	at dirPath,
+	id packageIdentity,
+	pkg declarations,
+) (testCorpus, bool) {
 	entries, err := dir(at)
 	if err != nil {
 		return nil, false
@@ -54,18 +61,18 @@ func testedSymbols(dir dirReader, file fileReader, at dirPath, pkg declarations)
 	if !anyTest(entries) {
 		return nil, false
 	}
-	var corpus testCorpus
-	decls := declarations{}
+	var seeds testSeeds
+	decls := newDeclarations()
 	decls.merge(pkg)
 	for _, entry := range entries {
 		if !isTest(fileName(entry)) {
 			continue
 		}
-		tests, declared := testsIn(file, filePath(filepath.Join(string(at), entry)))
-		corpus = append(corpus, tests...)
+		tests, declared := testsIn(file, filePath(filepath.Join(string(at), entry)), id)
+		seeds = append(seeds, tests...)
 		decls.merge(declared)
 	}
-	return expanded(corpus, decls), true
+	return expanded(seeds, decls), true
 }
 
 // anyTest reports whether the directory holds a test file at all.
@@ -74,34 +81,34 @@ func anyTest(entries []string) bool {
 }
 
 // testsIn is every test function declared in the file, each carrying its
-// lower-cased name and the identifiers its own body mentions, alongside what
-// every name the file declares writes down — the helpers a test reaches
-// through.
+// lower-cased name and what its own body spells, alongside what every name the
+// file declares writes down — the helpers a test reaches through.
 //
 // The file is parsed for syntax only: no type information crosses the pass
 // boundary, and none is needed to read a function's name or the identifiers it
 // writes. An unreadable or unparseable file contributes nothing, so the probe
 // fails OPEN — reporting a claim as unverified because a file would not open
 // would be a finding about the filesystem.
-func testsIn(read fileReader, path filePath) (testCorpus, declarations) {
+func testsIn(read fileReader, path filePath, id packageIdentity) (testSeeds, declarations) {
 	src, err := read(string(path))
 	if err != nil {
-		return nil, nil
+		return nil, newDeclarations()
 	}
 	parsed, err := parser.ParseFile(token.NewFileSet(), string(path), src, 0)
 	if err != nil {
-		return nil, nil
+		return nil, newDeclarations()
 	}
-	var out testCorpus
+	self := selfNamesIn(parsed, id)
+	var out testSeeds
 	for _, fn := range funcsIn(parsed) {
 		if strings.HasPrefix(fn.Name.Name, "Test") {
-			out = append(out, testFunc{
-				uses: mentionedIn(fn.Body),
+			out = append(out, seededTest{
+				seed: mentionedIn(fn.Body, self),
 				name: testName(strings.ToLower(fn.Name.Name)),
 			})
 		}
 	}
-	return out, declaredIn(parsed)
+	return out, declaredIn(parsed, id)
 }
 
 // funcsIn is every function and method a file declares.
@@ -113,108 +120,6 @@ func funcsIn(file *ast.File) []*ast.FuncDecl {
 		}
 	}
 	return out
-}
-
-// declaredIn is what each name a file declares writes down, which is what a
-// test reaches by naming it.
-func declaredIn(file *ast.File) declarations {
-	decls := declarations{}
-	for _, decl := range file.Decls {
-		switch declared := decl.(type) {
-		case *ast.FuncDecl:
-			decls.add(symbolName(declared.Name.Name), writtenBy(declared))
-		case *ast.GenDecl:
-			addSpecs(decls, declared)
-		}
-	}
-	return decls
-}
-
-// writtenBy is everything a function declaration writes down: its body, its
-// SIGNATURE, and its receiver.
-//
-// The signature is not decoration here, it is where Go keeps type names. A type
-// identifier is spelled in declarations and almost never inside a body: callers
-// build values with composite literals, untyped constants and :=, so a walk
-// over bodies alone can never reach a type however thoroughly a test drives it.
-// Crediting the signature is what lets a test that calls Parse be credited with
-// reaching the Pattern that Parse returns.
-func writtenBy(fn *ast.FuncDecl) usedNames {
-	written := mentionedIn(fn.Body)
-	written.absorb(identsIn(fn.Type))
-	if fn.Recv != nil {
-		written.absorb(identsIn(fn.Recv))
-	}
-	return written
-}
-
-// addSpecs records what each name a var, const or type declaration introduces
-// writes down: a value's initialiser and declared type, and a type's own
-// definition. A package-level value is a body like any other — this fleet
-// builds its analyzers as `var Analyzer = newAnalyzer()`, and a test that
-// drives Analyzer reaches everything the constructor reaches — and a struct's
-// definition is where the types of its fields are spelled.
-func addSpecs(decls declarations, decl *ast.GenDecl) {
-	for _, spec := range decl.Specs {
-		switch declared := spec.(type) {
-		case *ast.ValueSpec:
-			addValue(decls, declared)
-		case *ast.TypeSpec:
-			decls.add(symbolName(declared.Name.Name), identsIn(declared.Type))
-		}
-	}
-}
-
-// addValue keys a value spec's initialisers and declared type under every name
-// the spec introduces.
-func addValue(decls declarations, value *ast.ValueSpec) {
-	written := usedNames{}
-	for _, expr := range value.Values {
-		written.absorb(identsIn(expr))
-	}
-	if value.Type != nil {
-		written.absorb(identsIn(value.Type))
-	}
-	for _, name := range value.Names {
-		decls.add(symbolName(name.Name), written)
-	}
-}
-
-// packageDeclarations is what each function the analyzed package declares mentions,
-// so a test that drives its subject through the package's own constructor or
-// entry point is credited with reaching it.
-func packageDeclarations(files []*ast.File) declarations {
-	decls := declarations{}
-	for _, file := range files {
-		decls.merge(declaredIn(file))
-	}
-	return decls
-}
-
-// mentionedIn is every identifier appearing anywhere in a function body,
-// including the selected half of a qualified reference, so store.Replace and
-// a.Replace both mention Replace.
-//
-// The nil guard is the walk's, not the rule's: a body-less declaration —
-// func TestStub(t *testing.T) with no braces — parses without error, and
-// walking its nil body panics. Such a test mentions nothing.
-func mentionedIn(body *ast.BlockStmt) usedNames {
-	if body == nil {
-		return usedNames{}
-	}
-	return identsIn(body)
-}
-
-// identsIn is every identifier anywhere inside one node.
-func identsIn(node ast.Node) usedNames {
-	mentioned := usedNames{}
-	ast.Inspect(node, func(node ast.Node) bool {
-		if ident, ok := node.(*ast.Ident); ok {
-			mentioned[symbolName(ident.Name)] = true
-		}
-		return true
-	})
-	return mentioned
 }
 
 // osReadDirNames lists the entry names of a directory.

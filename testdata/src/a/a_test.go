@@ -81,3 +81,16 @@ func TestSplit(t *testing.T) {}
 // TestWritersObserveNoMix spells Split under a name that does not carry it. The
 // two halves of the exemption are present in the file and in no single test.
 func TestWritersObserveNoMix(t *testing.T) { Split() }
+
+// TestStagedKeepsEveryRecord names staged and writes the house subtest idiom.
+// It reaches staged only if `t.Run` is mistaken for the package's own Run, so
+// this test verifies nothing and must not silence the claim.
+func TestStagedKeepsEveryRecord(t *testing.T) { t.Run("case", func(t *testing.T) {}) }
+
+// TestStoredIsWrittenAtomically names stored and reaches it through a method
+// call on a value, which is the selected half that MUST still count: Save is a
+// method this package declares, so the selection denotes a declaration.
+func TestStoredIsWrittenAtomically(t *testing.T) {
+	var s Store
+	s.Save()
+}
