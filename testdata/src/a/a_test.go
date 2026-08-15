@@ -2,7 +2,8 @@ package a
 
 import "testing"
 
-// TestVerified names the Verified symbol, so its documented claim is satisfied.
+// TestVerified names the Verified symbol and calls it in its own body, so its
+// documented claim is satisfied.
 func TestVerified(t *testing.T) { Verified() }
 
 // TestForged spells the Forged symbol in its name and never uses it. A name is
@@ -14,13 +15,43 @@ func TestForged(t *testing.T) {}
 // the floor of the exemption and is silent by design.
 func TestMentioned(t *testing.T) { _ = Mentioned }
 
-// TestIndirect names Indirect and reaches it only through a helper, so its own
-// body mentions nothing and Indirect's claim is still reported.
+// TestIndirect names Indirect and reaches it through a helper, so the subject
+// is spelled one hop out from this body.
 func TestIndirect(t *testing.T) { callIndirect() }
 
-// callIndirect is where the mention hides. It is not a test function, so
-// nothing it mentions reaches the corpus.
+// callIndirect is the one hop, and it is where the mention sits.
 func callIndirect() { Indirect() }
+
+// TestChained names Chained and reaches it two hops out.
+func TestChained(t *testing.T) { outerHop() }
+
+// outerHop is the first hop and spells no subject.
+func outerHop() { innerHop() }
+
+// innerHop is the second hop, and it is where the mention sits.
+func innerHop() { Chained() }
+
+// TestCycled names Cycled and reaches it through two helpers that call each
+// other, so the expansion meets a name it has already expanded.
+func TestCycled(t *testing.T) { ping() }
+
+// ping calls pong.
+func ping() { pong() }
+
+// pong calls ping back, and spells the subject.
+func pong() { ping(); Cycled() }
+
+// TestConfigured names Configured and reaches it through a package-level
+// value, whose initialiser is the only place the subject is spelled.
+func TestConfigured(t *testing.T) { _ = Driver }
+
+// TestHandleIsOneWord names Handle and spells no such type: the constructor it
+// calls names the type in its result, which is where Go keeps type names.
+func TestHandleIsOneWord(t *testing.T) { _ = OpenHandle() }
+
+// TestHeldTravelsInACarrier names Held and spells no such type: the struct it
+// builds names the type in a field declaration.
+func TestHeldTravelsInACarrier(t *testing.T) { _ = Carrier{} }
 
 // TestConcurrentWritersNeverObserveAMix uses Unnamed but does not carry its
 // name, so it does not silence Unnamed's claim.
@@ -33,8 +64,8 @@ func TestDescriptive(t *testing.T) {
 	}
 }
 
-// TestCopiedIsSafeToCopy exercises Copied through its constructor and never
-// writes the type's own name, so its body mentions nothing and the claim stands.
+// TestCopiedIsSafeToCopy exercises Copied through its constructor, so the walk
+// has to leave the test files to find the type's name in NewCopied's body.
 func TestCopiedIsSafeToCopy(t *testing.T) {
 	first := NewCopied()
 	second := first
@@ -44,7 +75,7 @@ func TestCopiedIsSafeToCopy(t *testing.T) {
 	}
 }
 
-// TestSplit carries Split's name and spells nothing.
+// TestSplit carries Split's name and reaches nothing.
 func TestSplit(t *testing.T) {}
 
 // TestWritersObserveNoMix spells Split under a name that does not carry it. The

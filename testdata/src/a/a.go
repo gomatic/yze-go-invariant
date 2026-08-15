@@ -1,5 +1,6 @@
-// Package a pins the invariant contract: an exported symbol whose doc comment
-// ASSERTS a property is reported unless some test function names that symbol.
+// Package a pins the invariant contract: a symbol whose doc comment ASSERTS a
+// property is reported unless some ONE test function both names that symbol and
+// reaches it.
 package a
 
 // The import declaration is a GenDecl whose specs are imports, exercising the
@@ -9,20 +10,23 @@ import "strings"
 // Joined keeps the import used.
 func Joined(parts []string) string { return strings.Join(parts, ",") }
 
-// Verified writes atomically, so no reader observes a partial value. A test
-// names this symbol, so the claim is treated as verified.
+// Verified writes atomically, so no reader observes a partial value. The test
+// carrying its name calls it in its own body.
 func Verified() {}
 
 // Unverified writes atomically, so no reader observes a partial value. No test
 // names this symbol, so the claim is unverified.
-func Unverified() {} // want "Unverified documents an invariant"
+// The whole message ships here once, remedy included, so the text a reader is
+// actually handed is pinned end to end and not only its opening clause.
+func Unverified() {} // want `Unverified documents an invariant \("atomically"\) that no test both names and reaches: exercise it from a test whose name carries it, or state the property as description`
 
 // Descriptive returns the number of segments it was given. This documentation
 // only describes, and asserts no property at all.
 func Descriptive() int { return 0 }
 
 // Forged writes atomically, so no reader observes a partial value.
-// Case: a test carries this symbol's name and does nothing whatever with it.
+// Case: a test carries this symbol's name and does nothing whatever with it, so
+// it reaches nothing and acquires nothing.
 func Forged() {} // want "Forged documents an invariant"
 
 // Mentioned writes atomically, so no reader observes a partial value.
@@ -31,42 +35,89 @@ func Forged() {} // want "Forged documents an invariant"
 func Mentioned() {}
 
 // Indirect writes atomically, so no reader observes a partial value.
-// Case: the test carrying its name reaches it only through a helper, so that
-// test's own body spells nothing.
-func Indirect() {} // want "Indirect documents an invariant"
+// Case: the test carrying its name reaches it through a helper declared in the
+// test file, one hop out from its own body.
+func Indirect() {}
 
 // Copied is safe to copy: every field is a value.
-// Case: the test carrying its name reaches it through a constructor, so that
-// test's own body spells no such type. Same shape as Indirect, on the type
-// path rather than the function one.
-type Copied struct{ retries int } // want "Copied documents an invariant"
+// Case: the test carrying its name reaches it through a constructor declared in
+// the PACKAGE, so the walk leaves the test files. Same shape as Indirect, on
+// the type path rather than the function one.
+type Copied struct{ retries int }
 
 // NewCopied builds a Copied.
 func NewCopied() Copied { return Copied{retries: 3} }
 
+// Chained writes atomically, so no reader observes a partial value.
+// Case: the test carrying its name reaches it two hops out, through a helper
+// that calls another helper. A single hop leaves this reported.
+func Chained() {}
+
+// Cycled writes atomically, so no reader observes a partial value.
+// Case: the helpers between the test and this symbol call each other, so the
+// expansion meets a name it has already expanded. Without the visited set the
+// walk does not terminate.
+func Cycled() {}
+
+// Configured writes atomically, so no reader observes a partial value.
+// Case: the test carrying its name drives a package-level value, and the only
+// spelling of this symbol sits in that value's initialiser rather than in any
+// function body.
+func Configured() {}
+
+// Driver is the package-level value whose initialiser reaches Configured.
+var Driver = configure()
+
+// configure is where the mention sits.
+func configure() int { Configured(); return 0 }
+
+// Handle is safe to copy: it holds one word.
+// Case: the test carrying its name spells no such type anywhere, because a Go
+// type name lives in declarations rather than in bodies. It calls a constructor
+// whose SIGNATURE is the only place this name appears.
+type Handle int
+
+// OpenHandle is the constructor whose result type is the mention.
+func OpenHandle() Handle { return 0 }
+
+// Held is safe to copy: it holds no reference.
+// Case: the test carrying its name builds the struct that CARRIES one, so this
+// name appears only in a field declaration. Same mechanism as Handle, on the
+// field path rather than the signature one.
+type Held struct{}
+
+// Carrier is the struct whose field declaration is the mention.
+type Carrier struct{ held Held }
+
 // Split writes atomically, so no reader observes a partial value.
-// Case: one test carries the name and a DIFFERENT test spells the symbol. Two
-// halves in two tests are not the exemption, and a corpus that pools a file's
-// identifiers cannot tell this apart from the real thing.
+// Case: one test carries the name and a DIFFERENT test reaches the symbol. Two
+// halves in two tests are not the exemption, and a corpus that pooled a file's
+// identifiers would be unable to tell this apart from the real thing.
 func Split() {} // want "Split documents an invariant"
 
 // Unnamed writes atomically, so no reader observes a partial value.
-// Case: a test spells this symbol under a name that does not carry it.
+// Case: a test reaches this symbol under a name that does not carry it.
 func Unnamed() {} // want "Unnamed documents an invariant"
 
-// blind always writes atomically.
-// Case: the only test carrying its name sits in the EXTERNAL test package,
-// which is unable to spell an unexported name at all.
-func blind() {}
+// blind writes atomically, so no reader observes a partial value.
+// Case: the only test carrying its name sits in the EXTERNAL test package and
+// reaches nothing at all. A package clause ending _test is free to write and
+// acquires no verification, so it excuses nothing.
+func blind() {} // want "blind documents an invariant"
 
-// unseen always writes atomically.
-// Case: blind's in-scope sibling. An INTERNAL test carries its name and was
-// able to spell it. Same claim, same shape, opposite verdict, and the only
-// difference between them is which test package names it.
-func unseen() {} // want "unseen documents an invariant"
+// unseen writes atomically, so no reader observes a partial value.
+// Case: blind's sibling. Its test is external too and equally unable to spell
+// an unexported name, but it drives the exported entry whose body reaches this
+// one. Same claim, same shape, same test package, opposite verdict, and the
+// only difference between them is whether the naming test reaches the symbol.
+func unseen() {}
 
-// internalHelper always writes atomically. Unexported symbols are IN scope: a
-// property claimed on an unexported helper is still a property nothing tests.
+// Reveal is the exported entry an external test drives to reach unseen.
+func Reveal() { unseen() }
+
+// internalHelper writes atomically, and nothing names it. Unexported symbols
+// are IN scope: a property claimed on an unexported helper is still a property
+// nothing tests.
 func internalHelper() {} // want "internalHelper documents an invariant"
 
 // Cache is safe to copy: its state lives behind a reference field. A type
