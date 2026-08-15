@@ -106,14 +106,3 @@ func TestClaimInFindsOnlyAssertions(t *testing.T) {
 	want.Empty(claimIn("Parse returns the parsed document."))
 	want.Empty(claimIn(""))
 }
-
-// TestIsNamedByMatchesCaseInsensitively pins the symbol-to-test correspondence.
-func TestIsNamedByMatchesCaseInsensitively(t *testing.T) {
-	t.Parallel()
-	want := assert.New(t)
-
-	corpus := testNames("testossetheadrenameerrorpreserveshead\ntestparse\n")
-	want.True(isNamedBy("SetHead", corpus))
-	want.True(isNamedBy("Parse", corpus))
-	want.False(isNamedBy("Materialize", corpus))
-}

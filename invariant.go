@@ -1,5 +1,6 @@
 // Package invariant provides a go/analysis analyzer that reports documented
-// symbols whose doc comment ASSERTS a property no test in the package names.
+// symbols whose doc comment ASSERTS a property no test in the package both
+// names and uses.
 //
 // A doc comment saying a write lands "atomically", that a reconstruction is
 // "byte-identical", or that a value is "safe to copy" is a contract claim.
@@ -8,14 +9,44 @@
 // property can be advertised in documentation, believed by every reader, and
 // verified by nothing.
 //
+// # The one exemption, and the floor under it
+//
+// A claim counts as verified when some ONE test function both carries the
+// symbol's name and mentions that symbol in its own body. The name says which
+// symbol a test is about; the mention says whether it touches it at all.
+//
+// The name alone was once enough, and that was a hole rather than a heuristic:
+// an empty func TestReplace(t *testing.T) {} silenced a claim outright, having
+// run nothing and needing no reference to the package's subject at all.
+// Requiring the mention makes the cheapest forgery cost the same act as writing
+// a shallow test — the symbol must exist, be reachable, and compile there.
+//
+// The floor is a MENTION rather than an assertion, on purpose. This probe reads
+// syntax, so it cannot tell an assertion that verifies the claim from one that
+// verifies something else, and demanding "an assertion" would move the forgery
+// from one free line to another. A test that names a symbol and merely refers
+// to it is therefore silent — the residual heuristic conceded below, and not a
+// hole, because acquiring it means writing a test about the symbol.
+//
+// # Documented scope limitations
+//
+// Only the test function's OWN body is read. A test reaching its subject through
+// a helper mentions nothing itself, so that subject is reported: the probe does
+// not follow calls, and errs toward reporting, a false positive costing an
+// adjudication where a false negative costs the point.
+//
+// A qualified reference counts — store.Replace and a.Replace both mention
+// Replace — so a method or another package's symbol sharing the name satisfies
+// the mention. There is no type information on the test side.
+//
 // This is a PROBE, not a gate. Its precision is bounded by English rather than
 // by Go — the keyword set will match prose that is descriptive rather than
-// contractual, and "named by a test" is a heuristic for "verified by a test".
-// It is built to be read and adjudicated during a quality audit, never to block
-// a push. In practice the keyword set lands on documented properties that no
-// test verifies, alongside claims that do have tests — which is the expected
-// behaviour of a probe and precisely why a human or agent decides, not the
-// build.
+// contractual, and "named and used by a test" is a heuristic for "verified by a
+// test". It is built to be read and adjudicated during a quality audit, never
+// to block a push. In practice the keyword set lands on documented properties
+// that no test verifies, alongside claims that do have tests — which is the
+// expected behaviour of a probe and precisely why a human or agent decides, not
+// the build.
 package invariant
 
 import (
@@ -32,7 +63,7 @@ import (
 )
 
 // message is the diagnostic emitted for an unverified documented invariant.
-const message = "%s documents an invariant (%q) that no test names"
+const message = "%s documents an invariant (%q) that no test names and uses"
 
 // claims are the words a doc comment uses to assert a property rather than to
 // describe behaviour. Kept deliberately small: each addition widens the probe's
@@ -43,10 +74,10 @@ var claims = []string{
 	"deduplicat", "must not", "cannot",
 }
 
-// Analyzer reports documented invariants that no test names.
+// Analyzer reports documented invariants that no test names and uses.
 var Analyzer = &analysis.Analyzer{
 	Name:     "invariant",
-	Doc:      "reports documented symbols whose doc comment asserts a property that no test in the package names",
+	Doc:      "reports documented symbols whose doc comment asserts a property that no test in the package names and uses",
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 	Run:      run,
 }
@@ -71,18 +102,14 @@ type claimText string
 // docText is a declaration's doc comment, as plain text.
 type docText string
 
-// testNames is the corpus of a package's test function names, lower-cased and
-// newline separated, against which a symbol is looked for.
-type testNames string
-
-// finding is one documented invariant with no test naming its symbol.
+// finding is one documented invariant that no test both names and uses.
 type finding struct {
 	symbol symbolName
 	claim  claimText
 }
 
-// run reports each exported symbol whose documentation asserts a property that
-// no test function in the package names.
+// run reports each documented symbol whose documentation asserts a property
+// that no test function in the package both names and uses.
 func run(pass *analysis.Pass) (any, error) {
 	ins := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	tested, hasTests := testedSymbols(readDir, readFile, packageDir(pass.Fset, pass.Files))
@@ -93,9 +120,9 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// findings collects every documented invariant on an exported symbol in a
-// non-test file that no test names, in source order.
-func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) map[finding]token.Pos {
+// findings collects every documented invariant declared in a non-test file
+// that no test both names and uses, in source order.
+func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testCorpus) map[finding]token.Pos {
 	found := map[finding]token.Pos{}
 	nodes := []ast.Node{(*ast.FuncDecl)(nil), (*ast.GenDecl)(nil)}
 	ins.Preorder(nodes, func(n ast.Node) {
@@ -108,8 +135,8 @@ func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testNames) m
 }
 
 // collect records a finding for each of n's documented symbols whose doc
-// comment asserts a property that no test names.
-func collect(info *types.Info, node ast.Node, tested testNames, into map[finding]token.Pos) {
+// comment asserts a property that no test both names and uses.
+func collect(info *types.Info, node ast.Node, tested testCorpus, into map[finding]token.Pos) {
 	sentinels := sentinelNames(info, node)
 	for _, item := range documented(node) {
 		if sentinels[item.symbol] || isNamedBy(item.symbol, tested) {
@@ -233,11 +260,6 @@ func claimIn(doc docText) claimText {
 		}
 	}
 	return ""
-}
-
-// isNamedBy reports whether any test function name contains the symbol.
-func isNamedBy(symbol symbolName, tested testNames) bool {
-	return strings.Contains(string(tested), strings.ToLower(string(symbol)))
 }
 
 // sorted returns the findings in source order so output is deterministic.

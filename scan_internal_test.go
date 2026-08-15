@@ -2,6 +2,7 @@ package invariant
 
 import (
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -25,8 +26,9 @@ func TestTestedSymbolsReadsBothTestPackages(t *testing.T) {
 
 	files := map[string]string{
 		"a.go":           "package a\nfunc Verified() {}\n",
-		"a_test.go":      "package a\nfunc TestInternalThing(t *testing.T) {}\nfunc helper() {}\n",
-		"a_ext_test.go":  "package a_test\nfunc TestExternalThing(t *testing.T) {}\n",
+		"a_test.go":      "package a\nfunc TestInternalThing(t *testing.T) { InternalThing() }\nfunc helper() { helper() }\n",
+		"a_ext_test.go":  "package a_test\nfunc TestExternalThing(t *testing.T) { a.ExternalThing() }\n",
+		"stub_test.go":   "package a\nfunc TestStub(t *testing.T)\n",
 		"notes.txt":      "not Go at all",
 		"broken_test.go": "package a\nthis is not Go\n",
 	}
@@ -48,10 +50,35 @@ func TestTestedSymbolsReadsBothTestPackages(t *testing.T) {
 	got, hasTests := testedSymbols(dir, read, "/pkg")
 	require.True(t, hasTests)
 
-	assert.True(t, isNamedBy("InternalThing", got), "named by the internal test package")
-	assert.True(t, isNamedBy("ExternalThing", got), "named by the EXTERNAL test package")
-	assert.False(t, isNamedBy("helper", got), "a non-Test function names nothing")
+	assert.True(t, isNamedBy("InternalThing", got), "named and used by the internal test package")
+	assert.True(t, isNamedBy("ExternalThing", got), "named by the EXTERNAL test package, used through the qualifier")
+	assert.False(t, isNamedBy("helper", got), "a non-Test function names nothing, however much it mentions")
 	assert.False(t, isNamedBy("Verified", got), "a source function is not a test name")
+	assert.False(t, isNamedBy("Stub", got), "a body-less test mentions nothing, and walking it must not panic")
+}
+
+// TestMentionedInReadsEveryIdentifierInTheBody pins what counts as a test USING
+// a symbol: any identifier the body writes, either half of a qualified
+// reference, and everything inside a subtest closure including that closure's
+// own signature. The boundary is the OUTER declaration — its name and its
+// parameter types are not things the test uses.
+func TestMentionedInReadsEveryIdentifierInTheBody(t *testing.T) {
+	t.Parallel()
+	want := assert.New(t)
+
+	src := "package a\nfunc TestThing(subject *outer.Marker) {\n\tsubject.Run(\"case\", func(inner *testing.T) { store.Replace(Direct) })\n}\n"
+	parsed, err := parser.ParseFile(token.NewFileSet(), "a_test.go", src, 0)
+	require.NoError(t, err)
+
+	got := mentionedIn(parsed.Decls[0].(*ast.FuncDecl).Body)
+	want.True(got["Replace"], "the selected half of store.Replace")
+	want.True(got["store"], "the qualifier half of store.Replace")
+	want.True(got["Direct"], "a plain identifier")
+	want.True(got["inner"], "an identifier inside a subtest closure")
+	want.True(got["T"], "a subtest closure's own signature is inside the body")
+	want.False(got["TestThing"], "the test's own name is not something it uses")
+	want.False(got["Marker"], "the OUTER signature is outside the body")
+	want.False(got["outer"], "the OUTER signature is outside the body")
 }
 
 // TestTestedSymbolsFailsOpen pins that a filesystem failure contributes nothing

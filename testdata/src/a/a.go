@@ -21,6 +21,28 @@ func Unverified() {} // want "Unverified documents an invariant"
 // only describes; it asserts no property, so it is never reported.
 func Descriptive() int { return 0 }
 
+// Forged writes atomically, so no reader observes a partial value. A test
+// SPELLS this symbol and does nothing whatever with it, which acquires no
+// verification at all, so the claim is still unverified.
+func Forged() {} // want "Forged documents an invariant"
+
+// Mentioned writes atomically, so no reader observes a partial value. The test
+// naming it refers to the symbol without calling it. That is the deliberate
+// FLOOR of the exemption — the probe reads syntax and cannot judge what a test
+// asserts — and it is cased here so the line is visible rather than assumed.
+func Mentioned() {}
+
+// Indirect writes atomically, so no reader observes a partial value. The test
+// naming it reaches it only through a helper, so the test's own body mentions
+// nothing. The probe reads ONE function body and does not follow calls, which
+// is a documented scope limitation that errs toward reporting.
+func Indirect() {} // want "Indirect documents an invariant"
+
+// Unnamed writes atomically, so no reader observes a partial value. A test USES
+// this symbol under a name that does not carry it. That is the other half of
+// the exemption on its own, and half an exemption is not the exemption.
+func Unnamed() {} // want "Unnamed documents an invariant"
+
 // internalHelper always writes atomically. Unexported symbols are IN scope: a
 // property claimed on an unexported helper is still a property nothing tests.
 func internalHelper() {} // want "internalHelper documents an invariant"

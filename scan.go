@@ -35,29 +35,30 @@ type (
 	fileReader func(path string) ([]byte, error)
 )
 
-// testedSymbols is the concatenated, lower-cased names of every test function
-// in the pass, against which a symbol is considered named.
+// testedSymbols is every test function in the package's directory, each paired
+// with the identifiers its body mentions, against which a symbol is considered
+// named and used.
 // A package with no tests is not this probe's finding to make: the coverage gate
 // already requires every package to be tested, and reporting the same gap here
 // would add noise without adding information. "No test names this symbol" and
 // "there are no tests" are different problems with different owners, so the
 // second return distinguishes them.
-func testedSymbols(dir dirReader, file fileReader, at dirPath) (testNames, bool) {
-	var names strings.Builder
+func testedSymbols(dir dirReader, file fileReader, at dirPath) (testCorpus, bool) {
 	entries, err := dir(at)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	if !anyTest(entries) {
-		return "", false
+		return nil, false
 	}
+	var corpus testCorpus
 	for _, entry := range entries {
 		if !isTest(fileName(entry)) {
 			continue
 		}
-		appendTestNames(file, filePath(filepath.Join(string(at), entry)), &names)
+		corpus = append(corpus, testsIn(file, filePath(filepath.Join(string(at), entry)))...)
 	}
-	return testNames(names.String()), true
+	return corpus, true
 }
 
 // anyTest reports whether the directory holds a test file at all.
@@ -65,28 +66,52 @@ func anyTest(entries []string) bool {
 	return slices.ContainsFunc(entries, func(entry string) bool { return isTest(fileName(entry)) })
 }
 
-// appendTestNames adds the lower-cased name of every test function in the file.
+// testsIn is every test function declared in the file, each carrying its
+// lower-cased name and the identifiers its own body mentions.
 //
 // The file is parsed for syntax only: no type information crosses the pass
-// boundary, and none is needed to read a function's name. An unreadable or
-// unparseable file contributes nothing, so the probe fails OPEN — reporting a
-// claim as unverified because a file would not open would be a finding about the
-// filesystem.
-func appendTestNames(read fileReader, path filePath, into *strings.Builder) {
+// boundary, and none is needed to read a function's name or the identifiers it
+// writes. An unreadable or unparseable file contributes nothing, so the probe
+// fails OPEN — reporting a claim as unverified because a file would not open
+// would be a finding about the filesystem.
+func testsIn(read fileReader, path filePath) testCorpus {
 	src, err := read(string(path))
 	if err != nil {
-		return
+		return nil
 	}
 	parsed, err := parser.ParseFile(token.NewFileSet(), string(path), src, 0)
 	if err != nil {
-		return
+		return nil
 	}
+	var out testCorpus
 	for _, decl := range parsed.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok && strings.HasPrefix(fn.Name.Name, "Test") {
-			_, _ = into.WriteString(strings.ToLower(fn.Name.Name) + "\n")
+			out = append(out, testFunc{name: testName(strings.ToLower(fn.Name.Name)), uses: mentionedIn(fn.Body)})
 		}
 	}
+	return out
+}
+
+// mentionedIn is every identifier appearing anywhere in a function body,
+// including the selected half of a qualified reference, so store.Replace and
+// a.Replace both mention Replace.
+//
+// The nil guard is the walk's, not the rule's: a body-less declaration —
+// func TestStub(t *testing.T) with no braces — parses without error, and
+// walking its nil body panics. Such a test mentions nothing.
+func mentionedIn(body *ast.BlockStmt) usedNames {
+	mentioned := usedNames{}
+	if body == nil {
+		return mentioned
+	}
+	ast.Inspect(body, func(node ast.Node) bool {
+		if ident, ok := node.(*ast.Ident); ok {
+			mentioned[symbolName(ident.Name)] = true
+		}
+		return true
+	})
+	return mentioned
 }
 
 // osReadDirNames lists the entry names of a directory.
