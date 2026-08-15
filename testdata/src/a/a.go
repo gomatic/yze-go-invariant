@@ -223,14 +223,17 @@ type Plain struct{}
 // spelling, and every other symbol here is at least three characters, so a rule
 // widened to excuse short symbols would change no verdict anywhere else. A test
 // below reaches this const under a name that does not carry it, so only the
-// naming half stands between the widening and a silence.
+// naming half stands between the widening and a silence. It kills the widening
+// AT TWO characters; a threshold of one survives it, which is what a fixture at
+// one point of a range can do and no more.
 const MB = 1 << 20 // want "MB documents an invariant"
 
 // Widened is never reordered.
 // Case: the naming half is keyed on the test's NAME, so a disjunct crediting
 // some prefix of it — an "integration" convention an author writes freely — is
 // a forgeable marker that adds no statement. The only test reaching this symbol
-// carries such a prefix and does not carry the symbol's name.
+// carries such a prefix and does not carry the symbol's name. It kills a
+// disjunct keyed on THIS prefix; one keyed on another spelling survives it.
 func Widened() {} // want "Widened documents an invariant"
 
 // Sentinel errors, whose docs describe the CONDITION each reports rather than

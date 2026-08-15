@@ -82,11 +82,13 @@ func fileOf(pass *analysis.Pass, n ast.Node) fileName {
 }
 
 // isTest reports whether name is a Go test file, by the same rule the go tool
-// applies: the name ENDS in "_test.go". Both edges of that literal matter and
-// both are cased. A suffix widened to "test.go" would exempt `httptest.go`,
-// which is an ordinary, idiomatic, compiled Go filename; a suffix widened to a
-// substring would exempt any name merely CONTAINING it, which an author picks
-// freely.
+// applies: the name ENDS in "_test.go", cased as the go tool cases it. Each of
+// those three is a case in testdata/src/filename, because each is a widening an
+// author reaches for. A suffix widened to "test.go" exempts `httptest.go`, which
+// is an ordinary, idiomatic, compiled Go filename; a suffix widened to a
+// substring exempts any name merely CONTAINING it, including a package whose
+// DIRECTORY carries the spelling; and a suffix folded to lower case exempts
+// `upper_Test.go`, which the go tool compiles.
 func isTest(name fileName) bool {
 	return strings.HasSuffix(string(name), "_test.go")
 }

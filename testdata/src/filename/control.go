@@ -12,9 +12,22 @@
 //     A suffix widened by one character exempts it.
 //   - kit_testkit.go CONTAINS "_test" and does not end in "_test.go". A suffix
 //     widened to a substring exempts it.
+//   - upper_Test.go differs from a test file's name only in CASE, and the go
+//     tool's own check is case sensitive, so it is compiled. A matcher folded to
+//     lower case exempts it.
 //   - generated.go carries a word an author picks freely and no marker of any
 //     kind. A second disjunct keyed on it exempts it, adds no statement, and is
 //     therefore invisible to statement coverage.
+//   - seeded.go holds a func SPELLED like a test in a file that is not one, so
+//     it pins the scan's own test-file filter: without it, production source
+//     seeds the exemption corpus.
+//
+// What these DO NOT do is close the class. A fixture pins a literal, so a
+// disjunct keyed on a different word, a different prefix or a different
+// threshold survives every one of them — measured, not assumed. Widening the
+// vocabulary here buys nothing; the class is closed by the rule that a matcher
+// reads the compiled name and by review, not by enumerating an author's
+// imagination.
 package filename
 
 // Control writes atomically, so no reader observes a partial value. It is the
