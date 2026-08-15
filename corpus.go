@@ -33,6 +33,13 @@ type testFunc struct {
 // The conjunction is the whole exemption: a name is free to write and acquires
 // nothing, so a name never counts on its own, and a mention under some other
 // test's name is not this test's subject.
+//
+// The naming half is a SUBSTRING test rather than a word match, so a short
+// symbol is named by any test whose spelling happens to contain it — "set"
+// inside TestOffsetBoundsAreInclusive. Requiring the mention stops that from
+// silencing a claim by itself, since the unrelated test has no reason to write
+// the symbol; it does not make the match precise, and is not an argument that
+// it should stay imprecise.
 func (fn testFunc) verifies(symbol symbolName) bool {
 	return fn.uses[symbol] && strings.Contains(string(fn.name), strings.ToLower(string(symbol)))
 }
