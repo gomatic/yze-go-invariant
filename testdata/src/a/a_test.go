@@ -32,3 +32,14 @@ func TestDescriptive(t *testing.T) {
 		t.Fatal("Descriptive must start at zero")
 	}
 }
+
+// TestCopiedIsSafeToCopy exercises Copied through its constructor and never
+// writes the type's own name, so its body mentions nothing and the claim stands.
+func TestCopiedIsSafeToCopy(t *testing.T) {
+	first := NewCopied()
+	second := first
+	second.retries = 9
+	if first.retries != 3 {
+		t.Fatal("a copy shared state with its original")
+	}
+}

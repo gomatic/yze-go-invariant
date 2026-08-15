@@ -38,6 +38,15 @@ func Mentioned() {}
 // is a documented scope limitation that errs toward reporting.
 func Indirect() {} // want "Indirect documents an invariant"
 
+// Copied is safe to copy: every field is a value. The test naming it reaches it
+// through a constructor and never writes the type's OWN name, so its claim is
+// reported — the helper limitation again, reached on the type path rather than
+// the function one.
+type Copied struct{ retries int } // want "Copied documents an invariant"
+
+// NewCopied builds a Copied.
+func NewCopied() Copied { return Copied{retries: 3} }
+
 // Unnamed writes atomically, so no reader observes a partial value. A test USES
 // this symbol under a name that does not carry it. That is the other half of
 // the exemption on its own, and half an exemption is not the exemption.

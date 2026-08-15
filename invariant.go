@@ -30,10 +30,12 @@
 //
 // # Documented scope limitations
 //
-// Only the test function's OWN body is read. A test reaching its subject through
-// a helper mentions nothing itself, so that subject is reported: the probe does
-// not follow calls, and errs toward reporting, a false positive costing an
-// adjudication where a false negative costs the point.
+// Only the test function's OWN body is read, and only as syntax. A test that
+// reaches its subject through a helper, or through a constructor that never
+// writes the type's own name, mentions nothing itself, so that subject is
+// reported: the probe follows neither calls nor types, and errs toward
+// reporting, a false positive costing an adjudication where a false negative
+// costs the point.
 //
 // A qualified reference counts — store.Replace and a.Replace both mention
 // Replace — so a method or another package's symbol sharing the name satisfies
