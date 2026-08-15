@@ -112,17 +112,19 @@ func TestMentionedInReadsEveryIdentifierInTheBody(t *testing.T) {
 	want.False(got.plain["outer"], "the OUTER signature is outside the body")
 }
 
-// TestSelfNamesInIsThePackageAndTheAliasesBoundToIt pins the one discrimination
-// the reach walk turns on, in both directions: a qualifier naming the package
-// under analysis denotes a declaration of it, and every other qualifier is a
-// value or a different package. The package's own NAME is what an unaliased
-// import binds — deriving it from the last element of the import PATH would be
-// wrong here, since this fleet puts package `authority` at `.../go-authority`.
-func TestSelfNamesInIsThePackageAndTheAliasesBoundToIt(t *testing.T) {
+// TestSelfNamesInIsWhatAnIMPORTOfThePackageBinds pins the one discrimination
+// the reach walk turns on, in both directions and at its boundary. A qualifier
+// naming the package under analysis denotes a declaration of it, and every
+// other qualifier is a value or a different package — but ONLY where the file
+// imports that package, because Go has no spelling for a package referring to
+// itself and a `store` inside `package store` is therefore always a value.
+// Deriving the bound name from the last element of the import PATH would be
+// wrong: this fleet puts package `authority` at `.../go-authority`.
+func TestSelfNamesInIsWhatAnIMPORTOfThePackageBinds(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
-	const src = "package authority_test\n" +
+	const external = "package authority_test\n" +
 		"import (\n" +
 		"\t\"github.com/gomatic/go-authority\"\n" +
 		"\tsame \"github.com/gomatic/go-authority\"\n" +
@@ -130,24 +132,31 @@ func TestSelfNamesInIsThePackageAndTheAliasesBoundToIt(t *testing.T) {
 		"\t\"testing\"\n)\n"
 	fleet := packageIdentity{name: "authority", path: "github.com/gomatic/go-authority"}
 
-	got := selfNamesIn(parseSource(t, "a_ext_test.go", src), fleet)
+	got := selfNamesIn(parseSource(t, "a_ext_test.go", external), fleet)
 
-	want.True(got["authority"], "the package's own name, which the unaliased import binds")
-	want.True(got["same"], "and any alias bound to the package's own import path")
+	want.True(got["authority"], "an unaliased import binds the package's own name")
+	want.True(got["same"], "and an aliased one binds the alias")
 	want.False(got["other"], "an alias bound to a different package is a different package")
 	want.False(got["testing"], "and so is an ordinary import")
 	want.False(got["go-authority"], "the last element of the path is not what the import binds")
+
+	const internal = "package authority\nimport \"testing\"\n"
+	inside := selfNamesIn(parseSource(t, "a_test.go", internal), fleet)
+
+	want.Empty(inside,
+		"a file that does not import the package cannot qualify it, so its own name there is a VALUE")
 }
 
-// TestImportedPathIsEmptyWhenThePathIsNotAQuotedString is the guard on the
-// import read rather than a clause of the rule: selfNamesIn compares an import's
-// path to the analyzed package's, and a spec whose path is not a quoted string
-// has no path to compare. Without the guard the unquote error is discarded and
-// the empty string compares equal to a package at the empty import path.
+// TestImportedPathIsEmptyWhenThePathIsNotAQuotedString pins both directions of
+// the import read. The empty result on a malformed spec is the CONTRACT rather
+// than a swallowed error: selfNamesIn compares the result to the analyzed
+// package's path, and the empty string is not a path any package has, so an
+// unreadable spec compares unequal — which is what a failure should do here.
 func TestImportedPathIsEmptyWhenThePathIsNotAQuotedString(t *testing.T) {
 	t.Parallel()
 	want := assert.New(t)
 
 	want.Equal(packagePath("a"), importedPath(&ast.ImportSpec{Path: &ast.BasicLit{Value: `"a"`}}))
-	want.Empty(importedPath(&ast.ImportSpec{Path: &ast.BasicLit{Value: "unquoted"}}))
+	want.Empty(importedPath(&ast.ImportSpec{Path: &ast.BasicLit{Value: "unquoted"}}),
+		"an unreadable path names no package, so it matches none")
 }

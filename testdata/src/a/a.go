@@ -140,6 +140,49 @@ func (s Store) Save() { stored() }
 // denotes a declaration this probe holds and expanding it is sound.
 func stored() {}
 
+// Len never returns a negative number.
+// Case: the only test naming it spells this name once, as the selected half of
+// a method call on a value of ANOTHER package's type. This package declares no
+// method of that name, so the selection denotes nothing here — neither a
+// declaration to expand nor a mention to credit — and the claim stands.
+func Len() int { return 0 } // want "Len documents an invariant"
+
+// Shadowed never returns nil.
+// Case: the test naming it writes `a.Load()`, where `a` is a LOCAL spelled like
+// this package. An internal test file does not import its own package and Go
+// has no spelling for one referring to itself, so that `a` is a value and its
+// selected half is a member. Crediting it on the spelling alone would expand
+// the package-level Load and silence this claim, which is the defect the whole
+// rule exists to close, arriving through the back door.
+func Shadowed() {} // want "Shadowed documents an invariant"
+
+// Load is the package-level function whose body a shadowing local would
+// wrongly reach. Its own documentation only describes.
+func Load() { Shadowed() }
+
+// Loader is the type whose method the shadowing local really holds.
+type Loader struct{}
+
+// Load is Loader's method, and it reaches nothing.
+func (l Loader) Load() {}
+
+// released is safe to copy: it holds no reference.
+// Case: `Sealed` is spelled twice by one test — bare, and as the selected half
+// of a selection from a value — and this package declares BOTH a function and a
+// method of that name. The two are different lookups, so a walk whose visited
+// set remembers only the name expands whichever it meets first and drops the
+// other, leaving this reachable only through the one it dropped.
+func released() {}
+
+// Sealed is the package-level function that reaches released.
+func Sealed() { released() }
+
+// Seal is the type carrying the method namesake.
+type Seal struct{}
+
+// Sealed is Seal's method, which reaches nothing and exists to collide.
+func (s Seal) Sealed() {}
+
 // internalHelper writes atomically, and nothing names it. Unexported symbols
 // are IN scope: a property claimed on an unexported helper is still a property
 // nothing tests.

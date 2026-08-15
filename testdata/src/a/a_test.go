@@ -1,6 +1,9 @@
 package a
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestVerified names the Verified symbol and calls it in its own body, so its
 // documented claim is satisfied.
@@ -93,4 +96,29 @@ func TestStagedKeepsEveryRecord(t *testing.T) { t.Run("case", func(t *testing.T)
 func TestStoredIsWrittenAtomically(t *testing.T) {
 	var s Store
 	s.Save()
+}
+
+// TestLenIsNeverNegative names Len and spells it only as the selected half of
+// a call on a strings.Builder, whose Len this package does not declare.
+func TestLenIsNeverNegative(t *testing.T) {
+	var b strings.Builder
+	_ = b.Len()
+}
+
+// TestShadowedIsNeverNil names Shadowed and writes `a.Load()`, where `a` is a
+// local spelled like this package. An internal test file cannot import its own
+// package, so that spelling is a value and Load is its member, not the
+// package's.
+func TestShadowedIsNeverNil(t *testing.T) {
+	var a Loader
+	a.Load()
+}
+
+// TestReleasedIsSafeToCopy names released and spells Sealed twice: bare, which
+// is the package function that reaches the subject, and selected from a value,
+// which is the method namesake that reaches nothing. One test, two lookups.
+func TestReleasedIsSafeToCopy(t *testing.T) {
+	var s Seal
+	s.Sealed()
+	Sealed()
 }

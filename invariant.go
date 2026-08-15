@@ -35,30 +35,39 @@
 //
 // # What a spelling can denote, which is the qualified-reference rule
 //
-// A name written bare, or qualified by the package under analysis — its own
-// package name, or an alias the file binds to its import path — refers to a
-// DECLARATION of that package. `a.Reveal()` is why that half matters: an
-// external `package a_test` cannot spell an unexported name at all, so a
-// package-qualified call is its only route to one.
+// A name written bare, or qualified by a name the file's own IMPORT of the
+// package under analysis binds — its alias, or the package's declared name
+// where there is no alias — refers to a DECLARATION of that package. Any OTHER
+// selected half is selected from a value, so it refers to a MEMBER: a method,
+// whose body it reaches, or a field, which declares nothing here.
 //
-// A name written as the selected half of any OTHER qualified reference is
-// selected from a value, so it refers to a MEMBER: a method, whose body it
-// reaches, or a field, which declares nothing here. It never refers to a
-// package-level declaration.
+// `a.Reveal()` is why the first half matters: an external `package a_test`
+// cannot spell an unexported name at all, so a package-qualified call is its
+// only route to one. Pooling the two was a soundness defect, and this suite is
+// why: its mandated domain signature is `func Run(ctx, logger, Config, args...)`
+// and `t.Run("case", ...)` is the house subtest idiom, so a walk taking every
+// selected half as a package-level name credits every subtest in such a package
+// with everything the entry point touches. 78 directories across the 279 fleet
+// modules declare a package-level `func Run` and hold a test writing `t.Run`.
+// The control is `gomatic/template.cli`'s greet command with a claim PLANTED on
+// `compose` and a subtest-only test named for it — neither is in the shipped
+// repo, which reports nothing under any of these builds — where the parent is
+// silent and this build reports.
 //
-// Pooling those two was a soundness defect, and this suite is why. Its own
-// mandated domain signature is `func Run(ctx, logger, Config, args...)` and
-// `t.Run("case", func(t *testing.T) {...})` is the house subtest idiom, so a
-// walk taking every selected half as a package-level name credits every subtest
-// in such a package with everything the entry point touches. Reproduced on
-// `gomatic/template.cli`'s own greet command, where a claim on `compose`,
-// reachable only from `Run`, is silenced by a table test that never mentions
-// it; 78 fleet packages carry that shape. Deriving the package's own spelling
-// from the last element of its import PATH does not work either — this fleet
-// puts package `authority` at `.../go-authority`.
+// Requiring the IMPORT is what makes the first half decidable, and it is the
+// guard. A file that does not import the package cannot package-qualify it — Go
+// has no spelling for a package referring to itself — so inside `package store`
+// the `store` in `store.Get()` is a VALUE. Matching the package's name without
+// the import is wrong in both directions at once, and both were reproduced: a
+// local named for the package makes a method call expand the package's function
+// of that name, reopening this defect; and the same local stops a genuine
+// method call from reaching the method's body, inventing a false positive. 43
+// internal test files across the fleet bind such a local and select on it.
+// Deriving the name from the import PATH instead does not work either — this
+// fleet puts package `authority` at `.../go-authority`.
 //
-// Crediting the method half is not decoration: dropping it adds 208 findings
-// over 279 fleet modules, on symbols their tests drive through a method —
+// Crediting the method half is not decoration: dropping it adds 209 findings
+// over the 279 modules, on symbols their tests drive through a method —
 // `gomatic/go-authority`'s `canonical` among them, the case the deleted
 // unexported carve-out existed for.
 //
@@ -71,9 +80,11 @@
 //
 // The transitive closure is a design decision and not an accident. Stopping at
 // the first hop recovers almost nothing: over 279 fleet modules one hop leaves
-// 476 findings where the full walk leaves 300, and stopping at the test's own
-// body leaves 657, so the shapes this probe was wrongly reporting sit further
-// out than a single call.
+// 478 findings where the full walk leaves 300, and stopping at the test's own
+// body leaves 659, so the shapes this probe was wrongly reporting sit further
+// out than a single call. (Both are this build with only the walk shortened —
+// not the 497 of the own-body rule that briefly shipped, which also carried the
+// unexported carve-out this one does not.)
 //
 // The floor is a REACH rather than an assertion, on purpose, and a reach is a
 // SPELLING rather than a reference. This probe reads the tests as syntax with
@@ -85,7 +96,9 @@
 // the pass cannot see. So the exemption is forgeable in one line —
 // `func TestReplace(t *testing.T) { var Replace int; _ = Replace }` silences a
 // claim, and so do a t.Skip()ped body, a body inside `if false`, and a struct
-// field of the same name. Only a mention in a COMMENT fails to silence.
+// field of the same name. What does NOT silence is a mention in a comment, and
+// the selected half of a selection from a value that matches no method this
+// package declares — `b.Len()` on a strings.Builder is not this package's Len.
 //
 // And for most findings the cheapest silence is not one line but NONE. Measured
 // over the fleet sweep below, 253 of the 300 findings are on symbols some test
@@ -151,8 +164,8 @@
 //   - the NAME-ONLY rule reported 270 across 48. This build adds 30 and
 //     silences none of them, so against that baseline it is strictly a
 //     tightening.
-//   - the OWN-BODY rule that briefly replaced it reported 495 across 94. This
-//     build silences 200 of those and adds 5, so against THAT baseline it is a
+//   - the OWN-BODY rule that briefly replaced it reported 497 across 94. This
+//     build silences 202 of those and adds 5, so against THAT baseline it is a
 //     large loosening, and a maintainer reading only the first bullet would
 //     have it backwards.
 //   - the build that pooled every selected half with the package's own names
@@ -163,6 +176,10 @@
 //
 // Restate all of them whenever the rule changes; a number here describing a
 // build that never shipped is a defect in the standard rather than a footnote.
+// They are also a measurement of a MOMENT, not a constant: the fleet is a set of
+// live working trees, and the own-body binary measured 495 earlier the same day
+// and 497 twice in a row afterwards, unchanged binary. Every number above was
+// taken from one back-to-back run on 2026-08-15.
 //
 // This is a PROBE, not a gate. Its precision is bounded by English rather than
 // by Go — the keyword set will match prose that is descriptive rather than
@@ -175,12 +192,6 @@
 package invariant
 
 import (
-	"go/ast"
-	"go/token"
-	"go/types"
-	"sort"
-	"strings"
-
 	goyze "github.com/gomatic/go-yze"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -237,61 +248,4 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 	report(pass, findings(pass, ins, tested))
 	return nil, nil
-}
-
-// findings collects every documented invariant declared in a non-test file
-// that no test both names and reaches, in source order.
-func findings(pass *analysis.Pass, ins *inspector.Inspector, tested testCorpus) map[finding]token.Pos {
-	found := map[finding]token.Pos{}
-	nodes := []ast.Node{(*ast.FuncDecl)(nil), (*ast.GenDecl)(nil)}
-	ins.Preorder(nodes, func(n ast.Node) {
-		if isTest(fileOf(pass, n)) {
-			return
-		}
-		collect(pass.TypesInfo, n, tested, found)
-	})
-	return found
-}
-
-// collect records a finding for each of n's documented symbols whose doc
-// comment asserts a property that no test both names and reaches.
-func collect(info *types.Info, node ast.Node, tested testCorpus, into map[finding]token.Pos) {
-	sentinels := sentinelNames(info, node)
-	for _, item := range documented(node) {
-		if sentinels[item.symbol] || isNamedBy(item.symbol, tested) {
-			continue
-		}
-		if claim := claimIn(item.doc); claim != "" {
-			into[finding{symbol: item.symbol, claim: claim}] = item.pos
-		}
-	}
-}
-
-// sorted returns the findings in source order so output is deterministic.
-func sorted(found map[finding]token.Pos) []finding {
-	out := make([]finding, 0, len(found))
-	for item := range found {
-		out = append(out, item)
-	}
-	sort.Slice(out, func(i, j int) bool { return found[out[i]] < found[out[j]] })
-	return out
-}
-
-// report emits one diagnostic per finding, anchored at the DECLARATION carrying
-// the claim. That is where a reader has to go to judge it, and it is available
-// now that the reporting pass no longer has to be one holding test files.
-func report(pass *analysis.Pass, found map[finding]token.Pos) {
-	for _, item := range sorted(found) {
-		pass.Reportf(found[item], message, item.symbol, item.claim)
-	}
-}
-
-// fileOf is the path of the file containing n.
-func fileOf(pass *analysis.Pass, n ast.Node) fileName {
-	return fileName(pass.Fset.Position(n.Pos()).Filename)
-}
-
-// isTest reports whether name is a Go test file.
-func isTest(name fileName) bool {
-	return strings.HasSuffix(string(name), "_test.go")
 }

@@ -44,7 +44,7 @@ func TestTestedSymbolsReadsBothTestPackages(t *testing.T) {
 	files := map[string]string{
 		"a.go":           "package a\nfunc Verified() {}\n",
 		"a_test.go":      "package a\nfunc TestInternalThing(t *testing.T) { InternalThing() }\nfunc helper() { helper() }\n",
-		"a_ext_test.go":  "package a_test\nfunc TestExternalThing(t *testing.T) { a.ExternalThing() }\n",
+		"a_ext_test.go":  "package a_test\nimport \"a\"\nfunc TestExternalThing(t *testing.T) { a.ExternalThing() }\n",
 		"stub_test.go":   "package a\nfunc TestStub(t *testing.T)\n",
 		"notes.txt":      "not Go at all",
 		"broken_test.go": "package a\nthis is not Go\n",
@@ -94,7 +94,7 @@ func TestTestedSymbolsReachesThroughBothSetsOfBodies(t *testing.T) {
 			"func drive() { Local() }\n" +
 			"func TestConstructed(t *testing.T) { NewConstructed() }\n" +
 			"func TestForged(t *testing.T) {}\n",
-		"a_ext_test.go": "package a_test\nfunc TestShared(t *testing.T) { shared() }\nfunc shared() { a.Shared() }\n",
+		"a_ext_test.go": "package a_test\nimport \"a\"\nfunc TestShared(t *testing.T) { shared() }\nfunc shared() { a.Shared() }\n",
 	}
 	dir := func(dirPath) ([]string, error) { return []string{"a_test.go", "a_ext_test.go"}, nil }
 	read := func(path string) ([]byte, error) { return []byte(files[filepath.Base(path)]), nil }

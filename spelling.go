@@ -36,31 +36,55 @@ type packageIdentity struct {
 type selfNames map[string]bool
 
 // selfNamesIn is every name this file uses for the package under analysis: the
-// package's own name, which is what an unaliased import of it binds and what
-// its own files call it, plus any ALIAS this file binds that import path to.
+// name each IMPORT of that package's path binds, which is the alias where the
+// file writes one and the package's own declared name where it does not.
 //
-// Deriving the name from the import PATH instead would be wrong here and was
-// checked: this fleet's own convention puts a library's package `authority` at
-// the path `github.com/gomatic/go-authority`, so the last path element is not
-// the bound name. The package's declared name and an explicit alias are the two
-// spellings that are actually decidable from syntax.
+// The IMPORT is what makes this decidable, and requiring it is the whole guard.
+// A file that does not import the package cannot package-qualify it — Go has no
+// spelling for a package referring to itself, so inside `package store` the
+// `store` in `store.Get()` is necessarily a VALUE. Matching the package's name
+// without the import gets that backwards in both directions at once: it reopens
+// the defect this rule exists to close, since a local named for the package
+// makes a method call expand the package's function of that name; and it
+// invents a new one, since the same local stops a genuine method call from
+// reaching the method's body. 43 internal test files across 279 fleet modules
+// bind a local spelled like their own package and then select on it.
+//
+// Deriving the name from the import PATH instead of from the package's own
+// would be wrong here and was checked: this fleet's convention puts a library's
+// package `authority` at the path `github.com/gomatic/go-authority`, so the
+// last path element is not what an unaliased import binds.
 func selfNamesIn(file *ast.File, id packageIdentity) selfNames {
-	names := selfNames{string(id.name): true}
+	names := selfNames{}
 	for _, spec := range file.Imports {
-		if spec.Name != nil && importedPath(spec) == id.path {
-			names[spec.Name.Name] = true
+		if importedPath(spec) != id.path {
+			continue
 		}
+		names[boundName(spec, id)] = true
 	}
 	return names
 }
 
-// importedPath is the path an import spec names, or empty when it is not a
-// quoted string the parser could read.
-func importedPath(spec *ast.ImportSpec) packagePath {
-	path, err := strconv.Unquote(spec.Path.Value)
-	if err != nil {
-		return ""
+// boundName is the name an import of the analyzed package binds: its alias
+// where the file writes one, and the package's own declared name where it does
+// not, since that is what Go binds for an unaliased import.
+func boundName(spec *ast.ImportSpec, id packageIdentity) string {
+	if spec.Name != nil {
+		return spec.Name.Name
 	}
+	return string(id.name)
+}
+
+// importedPath is the path an import spec names.
+//
+// The unquote error is discarded rather than guarded because it carries nothing
+// a caller could act on: strconv.Unquote returns the empty string on every
+// failure, and the empty string is not a path any package under analysis has,
+// so a malformed spec compares unequal exactly as a failure should. A guard
+// here would branch to the value the fall-through already produces, which is
+// dead code wearing the shape of care.
+func importedPath(spec *ast.ImportSpec) packagePath {
+	path, _ := strconv.Unquote(spec.Path.Value)
 	return packagePath(path)
 }
 
