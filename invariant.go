@@ -55,10 +55,16 @@
 // the pass cannot see. So the exemption is forgeable in one line —
 // `func TestReplace(t *testing.T) { var Replace int; _ = Replace }` silences a
 // claim, and so do a t.Skip()ped body, a body inside `if false`, and a struct
-// field of the same name. What the conjunction buys is not that forging is hard
-// but that it must be written deliberately, in the body of the test that
-// carries the name, where a reader judging the claim will find it. Only a
-// mention in a COMMENT fails to silence.
+// field of the same name. Only a mention in a COMMENT fails to silence.
+//
+// And for most findings the cheapest silence is not one line but NONE. Measured
+// over the fleet sweep below, 252 of the 298 findings are on symbols some test
+// already reaches — they are reported only because no test's NAME happens to
+// carry the symbol — so the whole forgery is renaming an existing test, which
+// adds no line and appears in no body. That is the honest statement of what the
+// conjunction buys: it is not that forging is hard, and it is not that a reader
+// judging the claim will find the forgery. It is only that both halves have to
+// be true of one test at once, which no accident produces.
 //
 // # Documented scope limitations
 //
@@ -100,11 +106,19 @@
 //
 // Measured on 2026-08-15 over the 279 fleet modules this suite is developed
 // against, with 39 of them failing to load and therefore measured as nothing at
-// all: this build reports 298 findings across 61 modules, against 270 across 48
-// for the name-only rule it replaces. It adds 28 and silences none of the 270,
-// so it is strictly a tightening. Restate that measurement whenever the rule
-// changes; a number here describing a build that never shipped is a defect in
-// the standard rather than a footnote.
+// all, this build reports 298 findings across 61 modules. Against the two rules
+// it succeeds, and both comparisons matter:
+//
+//   - the NAME-ONLY rule reported 270 across 48. This build adds 28 and
+//     silences none of them, so against that baseline it is strictly a
+//     tightening.
+//   - the OWN-BODY rule that briefly replaced it reported 495 across 94. This
+//     build silences 201 of those and adds 4, so against THAT baseline it is a
+//     large loosening, and a maintainer reading only the first bullet would
+//     have it backwards.
+//
+// Restate both whenever the rule changes; a number here describing a build that
+// never shipped is a defect in the standard rather than a footnote.
 //
 // This is a PROBE, not a gate. Its precision is bounded by English rather than
 // by Go — the keyword set will match prose that is descriptive rather than
