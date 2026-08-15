@@ -53,7 +53,7 @@
 // in such a package with everything the entry point touches. Reproduced on
 // `gomatic/template.cli`'s own greet command, where a claim on `compose`,
 // reachable only from `Run`, is silenced by a table test that never mentions
-// it; 53 fleet packages carry that shape. Deriving the package's own spelling
+// it; 78 fleet packages carry that shape. Deriving the package's own spelling
 // from the last element of its import PATH does not work either — this fleet
 // puts package `authority` at `.../go-authority`.
 //
@@ -157,7 +157,7 @@
 //     have it backwards.
 //   - the build that pooled every selected half with the package's own names
 //     reported 298 across 61. This build adds 2 and silences none, because that
-//     defect is LATENT: 53 fleet packages carry the `func Run` / `t.Run` shape,
+//     defect is LATENT: 78 fleet packages carry the `func Run` / `t.Run` shape,
 //     and today only two of them also carry a claim on a symbol nothing else
 //     reaches. A fleet delta of 2 is not evidence that the defect is small.
 //
